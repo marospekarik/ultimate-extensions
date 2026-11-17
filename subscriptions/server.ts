@@ -43,7 +43,7 @@ const BACKOFF_MAX = 60 * MINUTE
  */
 const SESSION = 0.8
 /** @ultimate's context, in tokens, above which the session rule compacts it. A compaction leaves it far below. */
-const LARGE = 300_000
+const LARGE = 120_000
 
 export const secrets = [
   {
