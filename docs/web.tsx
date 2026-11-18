@@ -3,6 +3,7 @@ import {
   ArchiveIcon,
   ArrowRightIcon,
   ChevronDownIcon,
+  DownloadIcon,
   FileTextIcon,
   ListIcon,
   MessageSquareIcon,
@@ -516,6 +517,26 @@ function Body({
   );
 }
 
+async function saveDoc(path: string, text: string) {
+  const name = path.split("/").pop() ?? "doc.md";
+  const file = new File([text], name, { type: "text/markdown" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file] });
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError"))
+        throw error;
+    }
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 const coarse =
   "pointer-coarse:h-11 pointer-coarse:px-3 pointer-coarse:text-[13px]";
 
@@ -976,7 +997,7 @@ function Docs() {
                   variant="ghost"
                 >
                   <ArchiveIcon />
-                  Keep
+                  <span className="max-md:sr-only">Keep</span>
                 </Button>
               )}
               <Button
@@ -988,6 +1009,19 @@ function Docs() {
               >
                 <MessageSquarePlusIcon />
                 Comment on doc
+              </Button>
+              <Button
+                className={coarse}
+                disabled={data?.status !== "ok"}
+                onClick={() =>
+                  data?.status === "ok" && void saveDoc(data.path, data.text)
+                }
+                size="xs"
+                title="Save the file, or share it from a phone"
+                variant="ghost"
+              >
+                <DownloadIcon />
+                <span className="max-md:sr-only">Download</span>
               </Button>
               <Button
                 aria-label="Reload"

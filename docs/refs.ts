@@ -23,6 +23,8 @@ export type Doc =
       frontmatter: Record<string, unknown>;
       /** The Markdown after the frontmatter. */
       body: string;
+      /** The file as stored, frontmatter included. */
+      text: string;
       size: number;
       modified: number;
     }

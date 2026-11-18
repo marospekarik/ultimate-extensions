@@ -16,5 +16,5 @@ export function parsed(
   modified: number,
 ): Doc {
   const { frontmatter, body } = split(text);
-  return { status: "ok", path, frontmatter, body, size, modified };
+  return { status: "ok", path, frontmatter, body, text, size, modified };
 }
