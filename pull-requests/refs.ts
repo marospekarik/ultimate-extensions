@@ -78,6 +78,24 @@ export type SitePreview =
       check?: Check
     }
 
+/**
+ * A PR run on this machine by the user setting `pullRequests.localRun["owner/repo"]` (`npm run pr:run {n}`), detached in
+ * its own process group. `starting`: no URL in its log yet; `running`: its log printed `url`; `stopping`: SIGTERM sent,
+ * it is cleaning up; `failed`: it exited by itself, with the last lines of its log.
+ */
+export type LocalRun = {
+  number: number
+  /** The PR's head when it started. */
+  head: string
+  startedAt: string
+} & (
+  | { status: 'starting' | 'stopping' }
+  | { status: 'running'; url: string }
+  | { status: 'failed'; error: string }
+)
+/** `enabled`: the setting names a command for this repository. */
+export type LocalRuns = { enabled: boolean; runs: LocalRun[] }
+
 /** A preview server of `instance` (its `refs.ts`): user-started ones carry `label` and `ref`. */
 export type InstancePreview = {
   id: string
@@ -127,6 +145,18 @@ export const ReviewAction = actionRef<
 export const MergeAction = actionRef<{ number: number; head: string }, null>(
   'pull-requests',
   'merge',
+)
+/** No arguments → whether PRs can run locally here, and the runs of this host. */
+export const LocalRunsAction = actionRef<null, LocalRuns>('pull-requests', 'localRuns')
+/** User only, trusted PRs: `{ number }` → starts the `localRun` command for it (restarts a run it has). */
+export const RunLocallyAction = actionRef<{ number: number }, LocalRun>(
+  'pull-requests',
+  'runLocally',
+)
+/** User only: `{ number }` → SIGTERM to its run, which cleans up; resolves once it is gone. */
+export const StopLocalRunAction = actionRef<{ number: number }, null>(
+  'pull-requests',
+  'stopLocalRun',
 )
 /** User only: `{ number }` → closes the PR without merging. */
 export const CloseAction = actionRef<{ number: number }, null>('pull-requests', 'close')

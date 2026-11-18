@@ -1,9 +1,14 @@
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
+import { closeSync, mkdirSync, openSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineExtension } from '@earendil-works/pi-durable'
 import type {
   Check,
   Checks,
+  LocalRun,
+  LocalRuns,
   PrDetail,
   PrList,
   PrSummary,
@@ -20,7 +25,13 @@ import type {
 export default defineExtension({ name: 'pull-requests' })
 
 type Ctx = {
-  host: { projectRoot: string; userHome: string }
+  host: {
+    projectRoot: string
+    userHome: string
+    home: string
+    resource<T>(key: string, create: () => T): T
+    onClose(cleanup: () => Promise<void>): void
+  }
   exec(
     command: string,
     args: string[],
@@ -267,17 +278,89 @@ async function detail(ctx: Ctx, n: number): Promise<PrDetail> {
   }
 }
 
-/** The site preview URL template for `repo` from the user's settings, or undefined. */
-async function previewTemplate(ctx: Ctx, repo: string) {
+/** `pullRequests.<key>[repo]` from the user's settings when it is a string with `{n}`, or undefined. */
+async function template(ctx: Ctx, key: 'sitePreviews' | 'localRun', repo: string) {
   try {
     const settings = JSON.parse(
       await readFile(join(ctx.host.userHome, '.ultimate/settings.json'), 'utf8'),
-    ) as { pullRequests?: { sitePreviews?: Record<string, unknown> } }
-    const template = settings.pullRequests?.sitePreviews?.[repo]
-    return typeof template === 'string' && template.includes('{n}') ? template : undefined
+    ) as { pullRequests?: Record<string, Record<string, unknown> | undefined> }
+    const value = settings.pullRequests?.[key]?.[repo]
+    return typeof value === 'string' && value.includes('{n}') ? value : undefined
   } catch {
     return undefined
   }
+}
+
+// ── Local runs: the user's `pullRequests.localRun` command, detached in its own process group ──
+
+/** How many PRs may run locally at once. */
+const RUN_CAP = 3
+/** How long a stopped run may take to clean up before its group is killed. */
+const STOP_GRACE = 20_000
+
+type Run = {
+  number: number
+  head: string
+  log: string
+  child: ChildProcess
+  /** The process group: the leader's PID. */
+  group: number
+  startedAt: string
+  stopping?: Promise<void>
+}
+
+const alive = (group: number) => {
+  try {
+    process.kill(-group, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * SIGTERM to the run's process group, so the command's own handlers stop its server and clean up (`pr:run` removes its
+ * worktree); whatever of the group is left after the grace is killed.
+ */
+function stopRun(runs: Map<number, Run>, run: Run) {
+  run.stopping ??= (async () => {
+    if (alive(run.group)) {
+      try {
+        process.kill(-run.group, 'SIGTERM')
+      } catch {}
+      const until = Date.now() + STOP_GRACE
+      while (alive(run.group) && Date.now() < until)
+        await new Promise((done) => setTimeout(done, 200))
+      if (alive(run.group))
+        try {
+          process.kill(-run.group, 'SIGKILL')
+        } catch {}
+    }
+    if (runs.get(run.number) === run) runs.delete(run.number)
+  })()
+  return run.stopping
+}
+
+/** The runs of this process, kept across reloads; all of them stop when the host stops. */
+const localRuns = (ctx: Ctx) =>
+  ctx.host.resource('pull-requests.localRuns', () => {
+    const runs = new Map<number, Run>()
+    ctx.host.onClose(async () => {
+      await Promise.all([...runs.values()].map((run) => stopRun(runs, run)))
+    })
+    return runs
+  })
+
+async function describe(run: Run): Promise<LocalRun> {
+  const log = await readFile(run.log, 'utf8').catch(() => '')
+  const url = /https?:\/\/(?:localhost|127\.0\.0\.1):\d+/.exec(log)?.[0]
+  const base = { number: run.number, head: run.head, startedAt: run.startedAt }
+  if (run.stopping) return { ...base, status: 'stopping' }
+  if (!alive(run.group)) {
+    const lines = log.trim().split('\n').slice(-3).join(' ').slice(0, 400)
+    return { ...base, status: 'failed', error: lines || 'It exited without output.' }
+  }
+  return url ? { ...base, status: 'running', url } : { ...base, status: 'starting' }
 }
 
 /** Whether the preview answers: any status below 400 counts, redirects included. */
@@ -294,8 +377,8 @@ async function answers(url: string) {
   }
 }
 
-export const userActions = ['comment', 'review', 'merge', 'close']
-export const pollActions = ['list', 'view', 'sitePreview']
+export const userActions = ['comment', 'review', 'merge', 'close', 'runLocally', 'stopLocalRun']
+export const pollActions = ['list', 'view', 'sitePreview', 'localRuns']
 
 export const actions = {
   async list(_args: unknown, ctx: Ctx): Promise<PrList> {
@@ -333,9 +416,9 @@ export const actions = {
   async sitePreview(args: unknown, ctx: Ctx): Promise<SitePreview> {
     const n = number(args)
     const { repo } = await context(ctx)
-    const template = await previewTemplate(ctx, repo)
-    if (!template) return { status: 'off' }
-    const url = template.replace('{n}', String(n)).replace(/\/+$/, '')
+    const site = await template(ctx, 'sitePreviews', repo)
+    if (!site) return { status: 'off' }
+    const url = site.replace('{n}', String(n)).replace(/\/+$/, '')
     const [raw, up] = await Promise.all([
       run(ctx, 'gh', [
         'pr',
@@ -383,6 +466,69 @@ export const actions = {
       run(ctx, 'git', ['rev-parse', '--verify', `refs/remotes/origin/pr/${n}^{commit}`]),
     ])
     return { spec: `${base}...${head}`, head }
+  },
+
+  async localRuns(_args: unknown, ctx: Ctx): Promise<LocalRuns> {
+    if (inPreview()) return { enabled: false, runs: [] }
+    const found = await repoOf(ctx)
+    const enabled = 'repo' in found && (await template(ctx, 'localRun', found.repo)) !== undefined
+    return { enabled, runs: await Promise.all([...localRuns(ctx).values()].map(describe)) }
+  },
+
+  async runLocally(args: unknown, ctx: Ctx): Promise<LocalRun> {
+    notInPreview()
+    const n = number(args)
+    const { repo } = await context(ctx)
+    const command = await template(ctx, 'localRun', repo)
+    if (!command)
+      throw new Error(`No pullRequests.localRun command for ${repo} in ~/.ultimate/settings.json.`)
+    const pr = await detail(ctx, n)
+    if (!pr.trusted)
+      throw new Error(
+        `PR #${n} is from a fork or from someone without write access: running it locally would run their code as you.`,
+      )
+    const runs = localRuns(ctx)
+    const previous = runs.get(n)
+    if (previous) await stopRun(runs, previous)
+    // A run that exited on its own (a failed start) stays listed with its error, but takes no slot.
+    if ([...runs.values()].filter((item) => alive(item.group)).length >= RUN_CAP)
+      throw new Error(`${RUN_CAP} PRs already run locally: stop one first.`)
+    const [program, ...rest] = command.replaceAll('{n}', String(n)).trim().split(/\s+/)
+    const dir = join(ctx.host.home, 'pr-runs')
+    mkdirSync(dir, { recursive: true })
+    const log = join(dir, `${n}.log`)
+    const fd = openSync(log, 'w')
+    let child: ChildProcess
+    try {
+      child = spawn(program!, rest, {
+        cwd: ctx.host.projectRoot,
+        detached: true,
+        stdio: ['ignore', fd, fd],
+      })
+    } finally {
+      closeSync(fd)
+    }
+    child.unref()
+    child.on('error', () => {})
+    if (child.pid === undefined) throw new Error(`Could not start ${program}.`)
+    const run: Run = {
+      number: n,
+      head: pr.headSha,
+      log,
+      child,
+      group: child.pid,
+      startedAt: new Date().toISOString(),
+    }
+    runs.set(n, run)
+    return describe(run)
+  },
+
+  async stopLocalRun(args: unknown, ctx: Ctx) {
+    const n = number(args)
+    const runs = localRuns(ctx)
+    const run = runs.get(n)
+    if (run) await stopRun(runs, run)
+    return null
   },
 
   async comment(args: unknown, ctx: Ctx) {

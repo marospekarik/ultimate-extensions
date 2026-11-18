@@ -7,6 +7,7 @@ import {
   FileDiffIcon,
   GitMergeIcon,
   GitPullRequestIcon,
+  LaptopIcon,
   MinusIcon,
   PlayIcon,
   RefreshCwIcon,
@@ -48,10 +49,13 @@ import {
   InstanceStartAction,
   InstanceStopAction,
   ListAction,
+  LocalRunsAction,
   MergeAction,
   previewLabel,
   ReviewAction,
+  RunLocallyAction,
   SitePreviewAction,
+  StopLocalRunAction,
   ViewAction,
 } from './refs.ts'
 import type {
@@ -139,6 +143,10 @@ function List({
   className?: string
 }) {
   const previewed = usePreviewed()
+  const local = useAction(LocalRunsAction, null, { every: 15_000, onError: () => {} })
+  const runningLocally = new Set(
+    (local.data?.runs ?? []).filter((run) => run.status !== 'failed').map((run) => run.number),
+  )
   const now = useNow(60_000)
   if (prs.length === 0)
     return (
@@ -170,6 +178,7 @@ function List({
             <span className="min-w-0 truncate">{pr.author === viewer ? 'you' : pr.author}</span>
             <span className="shrink-0 text-muted-foreground/60">· {ago(pr.updatedAt, now)}</span>
             <span className="ml-auto flex shrink-0 gap-1">
+              {runningLocally.has(pr.number) && <Tag>running</Tag>}
               {previewed.has(previewLabel(pr.number)) && <Tag>preview</Tag>}
               {pr.draft && <Tag>draft</Tag>}
               {pr.mergeable === 'CONFLICTING' && <Tag tone="error">conflicts</Tag>}
@@ -462,7 +471,12 @@ function Composer({ pr, onSent }: { pr: PrDetail; onSent: () => void }) {
 function SitePreviewNote({ site }: { site: Exclude<SitePreview, { status: 'off' }> }) {
   const sha = site.head.slice(0, 7)
   const check = site.check?.url ? (
-    <a className="underline underline-offset-2" href={site.check.url} rel="noreferrer" target="_blank">
+    <a
+      className="underline underline-offset-2"
+      href={site.check.url}
+      rel="noreferrer"
+      target="_blank"
+    >
       {site.status === 'failed' ? 'see the run' : 'the run'}
     </a>
   ) : null
@@ -603,6 +617,124 @@ function useUltimatePreview(number: number, pr: PrDetail | undefined, inPreview:
   return { button, note }
 }
 
+/** Whether this page is on this machine: a local run listens on its localhost only. */
+const onThisMachine = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)
+
+/**
+ * A local run of the PR's head with the user's `pullRequests.localRun` command: `button` starts it, `note` links it
+ * while it runs, with Stop, and Restart when the PR moved on.
+ */
+function useLocalRun(number: number, pr: PrDetail | undefined) {
+  const runs = useAction(LocalRunsAction, null, { every: 3000, onError: () => {} })
+  const [busy, setBusy] = useState<'starting' | 'stopping' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  if (!pr || !runs.data?.enabled) return { button: null, note: null }
+  const mine = runs.data.runs.find((run) => run.number === number)
+  const act = (what: 'starting' | 'stopping', call: () => Promise<unknown>) => async () => {
+    setBusy(what)
+    setError(null)
+    try {
+      await call()
+    } catch (caught) {
+      setError(errorMessage(caught))
+    } finally {
+      setBusy(null)
+      void runs.refetch()
+    }
+  }
+  const start = act('starting', () => api.action(RunLocallyAction, { number }))
+  const stop = act('stopping', () => api.action(StopLocalRunAction, { number }))
+  const sha = (ref: string) => ref.slice(0, 7)
+  const link = 'underline underline-offset-2 disabled:opacity-50'
+  const live = mine && mine.status !== 'failed'
+  const button =
+    pr.trusted && !live ? (
+      <Button
+        disabled={busy !== null}
+        onClick={start}
+        size="sm"
+        title="Runs this PR's head on this machine with mocked providers, in a temporary worktree removed on Stop."
+        variant="outline"
+      >
+        <LaptopIcon />
+        {busy === 'starting' ? 'Starting…' : 'Run locally'}
+      </Button>
+    ) : null
+  const stopButton = (
+    <button
+      className={link}
+      disabled={busy !== null || mine?.status === 'stopping'}
+      onClick={stop}
+      type="button"
+    >
+      {busy === 'stopping' || mine?.status === 'stopping' ? 'Stopping…' : 'Stop'}
+    </button>
+  )
+  const note = (
+    <>
+      {!pr.trusted && (
+        <p className="text-muted-foreground/70">
+          No local run: it would run this PR&apos;s code as you, so it is offered only for PRs from
+          people with write access, never from forks.
+        </p>
+      )}
+      {mine?.status === 'starting' && (
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-muted-foreground">
+          <CircleDotIcon className="size-3.5 animate-pulse text-warning" />
+          <span>Starting {sha(mine.head)} locally…</span>
+          <span>·</span>
+          {stopButton}
+        </p>
+      )}
+      {mine?.status === 'running' && (
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-muted-foreground">
+          <CheckIcon className="size-3.5 text-success" />
+          <span>
+            Running at{' '}
+            <a
+              className="underline underline-offset-2"
+              href={mine.url}
+              rel="noreferrer"
+              target="_blank"
+            >
+              {mine.url}
+            </a>{' '}
+            (commit {sha(mine.head)})
+          </span>
+          <span>·</span>
+          {stopButton}
+        </div>
+      )}
+      {mine?.status === 'stopping' && (
+        <p className="flex items-center gap-1.5 text-muted-foreground">
+          <CircleDotIcon className="size-3.5 animate-pulse text-warning" />
+          Stopping the local run and removing its worktree…
+        </p>
+      )}
+      {live && !onThisMachine && (
+        <p className="text-muted-foreground">
+          The local run is reachable only on this machine: open it in a browser here.
+        </p>
+      )}
+      {live && mine.head !== pr.headSha && (
+        <p className="text-warning">
+          New commits since the local run started ({sha(mine.head)} → {sha(pr.headSha)}).{' '}
+          <button className={link} disabled={busy !== null} onClick={start} type="button">
+            {busy === 'starting' ? 'Restarting…' : 'Restart it'}
+          </button>
+        </p>
+      )}
+      {mine?.status === 'failed' && (
+        <p className="text-error">
+          The local run of {sha(mine.head)} stopped: {mine.error}
+        </p>
+      )}
+      {error && <p className="text-error">{error}</p>}
+    </>
+  )
+  return { button, note }
+}
+
 function Detail({
   number,
   repo,
@@ -624,6 +756,7 @@ function Detail({
     view.data?.number === number ? view.data : undefined,
     preview,
   )
+  const localRun = useLocalRun(number, view.data?.number === number ? view.data : undefined)
   const [reviewed, setReviewed] = useReviewed()
   const [, setReviewSpec] = useUiState<string>('ext.review.spec', 'uncommitted')
   const { showSurface } = useUltimate()
@@ -702,6 +835,7 @@ function Detail({
             </a>
           </Button>
         )}
+        {localRun.button}
         {ultimatePreview.button}
         <Button
           disabled={
@@ -733,6 +867,7 @@ function Detail({
           </p>
         )}
         {site && <SitePreviewNote site={site} />}
+        {localRun.note}
         {ultimatePreview.note}
         {pinned === pr.headSha && (
           <p className="flex items-center gap-1.5 text-muted-foreground">

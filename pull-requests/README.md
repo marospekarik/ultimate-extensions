@@ -16,6 +16,17 @@ and inline comments in time order.
   preview check passed), building, failed (linked to the run), from an earlier commit (no preview check on the head,
   but the URL answers: later commits did not change the site), or none. The deploy check is the one whose name
   contains "preview" but not "remove", "clean" or "delete". Repositories without the setting show nothing.
+- **Run locally** runs the PR on this machine with the command the user setting names:
+  `{ "pullRequests": { "localRun": { "owner/repo": "npm run pr:run {n}" } } }` in `~/.ultimate/settings.json`
+  (`{n}` is the PR number; the command is split on spaces, no shell). It starts in the project checkout as a detached
+  process group that outlives the action, writing `pr-runs/<n>.log` in the instance home; the first
+  `http://localhost:<port>` in that log is its address. A line under the buttons links it with the commit it started
+  on, and **Stop** sends SIGTERM to its group so the command cleans up (Forma's `pr:run` removes its worktree and data),
+  killing what is left after 20 s. When the PR has new commits since, **Restart it** starts it on the new head. A run
+  that exits by itself shows the end of its log. At most three run at once, the runs survive extension reloads, and a
+  host stop stops them all. On a page opened over the tailnet the line says the run is reachable only on this
+  machine. Offered only on PRs from people with write access and never from forks, since it runs the PR's code as you;
+  repositories without the setting show nothing. The list marks running PRs `running`.
 - **Ultimate preview** shows on PRs that change `.ultimate/`. It fetches the PR's head (as Review diff does) and asks
   `instance` to `start` a separate Ultimate on that commit, labelled `PR #<n>`, with the commit as its project: the
   PR's agents, extensions and settings run there. Once it is up, a line under the buttons links it: here the
@@ -45,8 +56,8 @@ status line counts the open PRs, with how many may merge now.
 In a preview instance (`ULTIMATE_INSTANCE_OWNER` is set), the tab is for looking: the header says `preview`, Merge
 and Close are disabled, the comment box and Ultimate preview are gone, and the server refuses `comment`, `review`, `merge` and `close`.
 
-Actions (`refs.ts`): `list`, `view { number }`, `sitePreview { number }` and `fetch { number }` are open to agents; `comment`, `review`, `merge`
-and `close` are user-only (`userActions`), so codemode refuses them. That does not stop an agent with a shell from
+Actions (`refs.ts`): `list`, `view { number }`, `sitePreview { number }`, `localRuns` and `fetch { number }` are open to
+agents; `comment`, `review`, `merge`, `close`, `runLocally` and `stopLocalRun` are user-only (`userActions`), so codemode refuses them. That does not stop an agent with a shell from
 running `gh` itself: the rule that agents never merge covers that.
 
 Personal extension: lives in `~/.ultimate/extensions/pull-requests/`, shows in every project. Turn it off with
