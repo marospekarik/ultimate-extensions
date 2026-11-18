@@ -10,6 +10,7 @@ changes Ultimate itself.
 | [project-rail](project-rail)      | A rail of tiles at the window's left edge, one per running Ultimate project, grouped by machine.   |
 | [pull-requests](pull-requests)    | Review and merge the project's open GitHub pull requests without leaving Ultimate.                 |
 | [subscriptions](subscriptions)    | Claude, Ollama Cloud and Codex subscription usage in the Agent sidebar's Plans block.              |
+| [theme-sync](theme-sync)          | Light/dark theme shared by every Ultimate project on this machine, switched live.                  |
 
 Each extension's README lists what it needs and its settings. `pull-requests` needs the `gh` CLI logged in;
 `subscriptions` reads usage through the providers' own logins and keys, which never leave the machine.
