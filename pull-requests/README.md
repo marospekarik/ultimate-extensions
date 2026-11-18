@@ -24,8 +24,11 @@ and inline comments in time order.
   on, and **Stop** sends SIGTERM to its group so the command cleans up (Forma's `pr:run` removes its worktree and data),
   killing what is left after 20 s. When the PR has new commits since, **Restart it** starts it on the new head. A run
   that exits by itself shows the end of its log. At most three run at once, the runs survive extension reloads, and a
-  host stop stops them all. On a page opened over the tailnet the line says the run is reachable only on this
-  machine. Offered only on PRs from people with write access and never from forks, since it runs the PR's code as you;
+  host stop stops them all. When Tailscale is up, each run is also published on the tailnet (never Funnel): a proxy
+  on 127.0.0.1 rewrites Host, Origin and Referer to the run's localhost address (Forma takes POSTs only from its own
+  origin) and redirects back to the tailnet URL, and `tailscale serve --https=<port>` (from 4850, skipping ports in
+  use) points at it. A page opened over the tailnet links that address; Stop turns off the mapping and the proxy with
+  the run. Without Tailscale, the line says the run is reachable only on this machine. Offered only on PRs from people with write access and never from forks, since it runs the PR's code as you;
   repositories without the setting show nothing. The list marks running PRs `running`.
 - **Ultimate preview** shows on PRs that change `.ultimate/`. It fetches the PR's head (as Review diff does) and asks
   `instance` to `start` a separate Ultimate on that commit, labelled `PR #<n>`, with the commit as its project: the

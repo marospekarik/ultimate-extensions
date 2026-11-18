@@ -90,7 +90,8 @@ export type LocalRun = {
   startedAt: string
 } & (
   | { status: 'starting' | 'stopping' }
-  | { status: 'running'; url: string }
+  /** `tailnet`: the same run over `tailscale serve`, when Tailscale is up. */
+  | { status: 'running'; url: string; tailnet?: string }
   | { status: 'failed'; error: string }
 )
 /** `enabled`: the setting names a command for this repository. */

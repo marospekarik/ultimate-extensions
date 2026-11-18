@@ -647,6 +647,9 @@ function useLocalRun(number: number, pr: PrDetail | undefined) {
   const sha = (ref: string) => ref.slice(0, 7)
   const link = 'underline underline-offset-2 disabled:opacity-50'
   const live = mine && mine.status !== 'failed'
+  // Off this machine the localhost address does not open: link the run's tailnet address when it has one.
+  const address =
+    mine?.status === 'running' ? (onThisMachine ? mine.url : (mine.tailnet ?? mine.url)) : undefined
   const button =
     pr.trusted && !live ? (
       <Button
@@ -693,11 +696,11 @@ function useLocalRun(number: number, pr: PrDetail | undefined) {
             Running at{' '}
             <a
               className="underline underline-offset-2"
-              href={mine.url}
+              href={address}
               rel="noreferrer"
               target="_blank"
             >
-              {mine.url}
+              {address}
             </a>{' '}
             (commit {sha(mine.head)})
           </span>
@@ -711,7 +714,7 @@ function useLocalRun(number: number, pr: PrDetail | undefined) {
           Stopping the local run and removing its worktree…
         </p>
       )}
-      {live && !onThisMachine && (
+      {mine?.status === 'running' && address === mine.url && !onThisMachine && (
         <p className="text-muted-foreground">
           The local run is reachable only on this machine: open it in a browser here.
         </p>

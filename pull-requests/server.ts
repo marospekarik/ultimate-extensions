@@ -1,8 +1,13 @@
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { closeSync, mkdirSync, openSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
+import { createServer, request } from 'node:http'
+import type { Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { defineExtension } from '@earendil-works/pi-durable'
 import type {
   Check,
@@ -295,6 +300,8 @@ async function template(ctx: Ctx, key: 'sitePreviews' | 'localRun', repo: string
 
 /** How many PRs may run locally at once. */
 const RUN_CAP = 3
+/** The first `tailscale serve` HTTPS port tried for a run's tailnet address. */
+const TAILNET_PORTS = 4850
 /** How long a stopped run may take to clean up before its group is killed. */
 const STOP_GRACE = 20_000
 
@@ -307,6 +314,79 @@ type Run = {
   group: number
   startedAt: string
   stopping?: Promise<void>
+  /** Its tailnet publication, once its URL is known: the proxy and the `tailscale serve` HTTPS port. */
+  published?: Promise<{ proxy: Server; port: number; url: string } | undefined>
+}
+
+let publishing: Promise<unknown> = Promise.resolve()
+
+const tailscale = (args: string[]) =>
+  promisify(execFile)('tailscale', args, { timeout: 15_000 }).then((result) => result.stdout)
+
+/**
+ * Publishes `local` (`http://localhost:<port>`) on the tailnet: a proxy on 127.0.0.1 that makes every request look
+ * like it came from `local` (Host, Origin and Referer, since Forma takes POSTs only from its own origin and Vite checks
+ * Host) and points redirects to `local` back at the tailnet URL, served by `tailscale serve --https` on a free port,
+ * tailnet only. Undefined when Tailscale is off or has no HTTPS name.
+ */
+async function publish(local: string) {
+  let dns: string
+  let used: Set<number>
+  try {
+    const status = JSON.parse(await tailscale(['status', '--json'])) as {
+      Self?: { DNSName?: string }
+    }
+    dns = status.Self?.DNSName?.replace(/\.$/, '') ?? ''
+    if (!dns) return undefined
+    const serve = JSON.parse((await tailscale(['serve', 'status', '--json'])) || '{}') as {
+      TCP?: Record<string, unknown>
+      Web?: Record<string, unknown>
+    }
+    const registry = JSON.parse(
+      await readFile(join(homedir(), '.ultimate/tailscale.json'), 'utf8').catch(() => '{}'),
+    ) as { ports?: Record<string, { port: number }> }
+    used = new Set([
+      ...Object.keys(serve.TCP ?? {}).map(Number),
+      ...Object.keys(serve.Web ?? {}).map((authority) => Number(authority.split(':').at(-1))),
+      ...Object.values(registry.ports ?? {}).map((entry) => entry.port),
+    ])
+  } catch {
+    return undefined
+  }
+  const target = new URL(local)
+  let port = TAILNET_PORTS
+  while (used.has(port)) port++
+  const url = `https://${dns}:${port}`
+  const proxy = createServer((req, res) => {
+    const headers = { ...req.headers, host: target.host }
+    if (headers.origin) headers.origin = target.origin
+    if (typeof headers.referer === 'string')
+      headers.referer = headers.referer.replace(/^https?:\/\/[^/]+/, target.origin)
+    const upstream = request(
+      { host: target.hostname, port: target.port, path: req.url, method: req.method, headers },
+      (response) => {
+        const location = response.headers.location
+        if (location?.startsWith(target.origin))
+          response.headers.location = url + location.slice(target.origin.length)
+        res.writeHead(response.statusCode ?? 502, response.headers)
+        response.pipe(res)
+      },
+    )
+    upstream.on('error', () => {
+      if (!res.headersSent) res.writeHead(502)
+      res.end()
+    })
+    req.pipe(upstream)
+  })
+  await new Promise<void>((done) => proxy.listen(0, '127.0.0.1', done))
+  const { port: proxied } = proxy.address() as AddressInfo
+  try {
+    await tailscale(['serve', '--bg', '--yes', `--https=${port}`, `http://127.0.0.1:${proxied}`])
+  } catch {
+    proxy.close()
+    return undefined
+  }
+  return { proxy, port, url }
 }
 
 const alive = (group: number) => {
@@ -336,6 +416,12 @@ function stopRun(runs: Map<number, Run>, run: Run) {
           process.kill(-run.group, 'SIGKILL')
         } catch {}
     }
+    const published = await run.published
+    if (published) {
+      await tailscale(['serve', `--https=${published.port}`, 'off']).catch(() => {})
+      published.proxy.close()
+      published.proxy.closeAllConnections()
+    }
     if (runs.get(run.number) === run) runs.delete(run.number)
   })()
   return run.stopping
@@ -360,7 +446,14 @@ async function describe(run: Run): Promise<LocalRun> {
     const lines = log.trim().split('\n').slice(-3).join(' ').slice(0, 400)
     return { ...base, status: 'failed', error: lines || 'It exited without output.' }
   }
-  return url ? { ...base, status: 'running', url } : { ...base, status: 'starting' }
+  if (!url) return { ...base, status: 'starting' }
+  // One at a time, so two runs never pick the same free port.
+  if (!run.published) {
+    run.published = publishing.then(() => publish(url).catch(() => undefined))
+    publishing = run.published
+  }
+  const tailnet = (await run.published)?.url
+  return { ...base, status: 'running', url, ...(tailnet && { tailnet }) }
 }
 
 /** Whether the preview answers: any status below 400 counts, redirects included. */
