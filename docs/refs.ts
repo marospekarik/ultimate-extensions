@@ -27,6 +27,10 @@ export type Doc =
       text: string;
       size: number;
       modified: number;
+      /** SHA-256 of `text`; a save sends it back as its base. */
+      hash: string;
+      /** Repo docs only: the file has uncommitted changes. */
+      dirty?: boolean;
     }
   /** Not found (not tracked, gone from the work tree, a report deleted or never written), or over the size cap. */
   | { status: "missing" | "tooLarge"; path: string; size?: number };
@@ -71,3 +75,27 @@ export const SendAction = actionRef<
   DocComments & { conversation: number },
   { conversation: number }
 >("docs", "send");
+
+/** One earlier version of a report: `id` names it, `at` is when it was replaced. */
+export type Version = { id: string; at: number; size: number };
+
+/** User only: `{ path, text, base }` → replaces a doc's text when its current hash is still `base`; returns the new hash. */
+export const WriteAction = actionRef<
+  { path: string; text: string; base: string },
+  { hash: string }
+>("docs", "write");
+/** `{ path }` of a report → its earlier versions, newest first (the last 20 saves). */
+export const HistoryAction = actionRef<{ path: string }, Version[]>(
+  "docs",
+  "history",
+);
+/** `{ path, id }` → the text of one of `history`'s versions. */
+export const VersionAction = actionRef<
+  { path: string; id: string },
+  { text: string }
+>("docs", "version");
+/** User only: `{ path, message? }` of a repo doc → commits that file alone on the checked-out branch. */
+export const CommitAction = actionRef<
+  { path: string; message?: string },
+  { commit: string }
+>("docs", "commit");

@@ -17,3 +17,5 @@ export const shownPath = (selected: string | null, paths: readonly string[]) =>
   paths.find((path) => path.toLowerCase() === "readme.md") ??
   paths[0] ??
   null;
+
+export const HISTORY = 20;

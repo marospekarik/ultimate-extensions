@@ -1,7 +1,8 @@
 import { KeyRoundIcon, RefreshCwIcon, ZapIcon } from 'lucide-react'
 import { useEffect } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { cn, defineWebExtension, events, useAction, useNow } from '@/sdk'
+import { cn, defineWebExtension, events, provide, useAction, useNow } from '@/sdk'
+import { BarFooter } from '../project-rail/ui.tsx'
 import { RefreshAction, UsageAction } from './refs.ts'
 import type { Credits, Peak, Plan, Today, UsageWindow } from './refs.ts'
 
@@ -258,27 +259,46 @@ function Card({ plan, peak, now }: { plan: Plan; peak: Peak; now: number }) {
   )
 }
 
-function Row({ plan, peak, now }: { plan: Plan; peak: Peak; now: number }) {
+/** The collapsed rail's look of a plan: its initial over a thin bar of the binding window. */
+function Chip({ plan }: { plan: Plan }) {
+  const most = binding(plan)
+  return (
+    <span className="flex w-8 shrink-0 flex-col items-center gap-1 group-hover/rail:hidden group-has-[:focus-visible]/rail:hidden">
+      <span className="font-mono text-[11px] text-muted-foreground">{plan.name.slice(0, 2)}</span>
+      <Bar className={cn('w-6', most && tone(most.used))} used={most?.used ?? 0} />
+    </span>
+  )
+}
+
+function BarRow({ plan, peak, now, where }: { plan: Plan; peak: Peak; now: number; where: 'rail' | 'phone' }) {
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
-          className="group/row mx-2 flex h-7 min-w-0 cursor-pointer items-center gap-2 rounded-md pr-2 pl-2.5 text-left outline-none hover:bg-sidebar-accent/50 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset"
+          className="flex min-w-0 cursor-pointer items-center gap-2.5 rounded-md py-1 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
           data-plan={plan.id}
           type="button"
         >
-          <span className="shrink-0 text-[12.5px] text-foreground/85">{plan.name.split(' ')[0]}</span>
-          {plan.id === 'ollama' && <PeakMark peak={peak} />}
-          <span className="ml-auto flex min-w-0 items-center gap-2">
-            {plan.setup ? (
-              <span className="shrink-0 font-mono text-[10px] text-muted-foreground/50">{plan.setup}</span>
-            ) : (
-              <Reading plan={plan} />
+          {where === 'rail' && <Chip plan={plan} />}
+          <span
+            className={cn(
+              'min-w-0 flex-1 items-center gap-2 px-2',
+              where === 'rail' ? 'hidden group-hover/rail:flex group-has-[:focus-visible]/rail:flex' : 'flex',
             )}
+          >
+            <span className="shrink-0 text-[12px] whitespace-nowrap text-foreground/85">{plan.name.split(' ')[0]}</span>
+            {plan.id === 'ollama' && <PeakMark peak={peak} />}
+            <span className="ml-auto flex items-center gap-2">
+              {plan.setup ? (
+                <span className="font-mono text-[10px] whitespace-nowrap text-muted-foreground/50">{plan.setup}</span>
+              ) : (
+                <Reading plan={plan} />
+              )}
+            </span>
           </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 p-3" side="right">
+      <PopoverContent align="start" className="w-80 max-w-[calc(100vw-1rem)] p-3" side={where === 'rail' ? 'right' : 'top'}>
         <Card now={now} peak={peak} plan={plan} />
       </PopoverContent>
     </Popover>
@@ -286,33 +306,24 @@ function Row({ plan, peak, now }: { plan: Plan; peak: Peak; now: number }) {
 }
 
 /**
- * The Agent sidebar's Plans block: one row per shown subscription, the binding window's bar and every window's
- * percentage, and an amber bolt while Ollama charges twice as much. A row opens its card; the heading's age is the newest
- * reading. With no plan shown there is no block.
+ * The Plans block pinned at the bottom of the project bar: one row per shown subscription with the binding window's bar and
+ * every window's percentage, and an amber bolt while Ollama charges twice as much. The collapsed rail shows each plan as
+ * its initial over a thin bar; hovering the rail opens the full rows. A row opens its card. With no plan shown there is no
+ * block.
  */
-function Plans() {
+function Plans({ where }: { where: 'rail' | 'phone' }) {
   const { data } = useAction(UsageAction, null, { every: 30_000, onError: () => {} })
   const now = useNow(30_000)
   if (!data?.plans.length) return null
-  const newest = Math.max(0, ...data.plans.map((plan) => plan.at ?? 0))
   return (
-    <div
-      className="mt-1 flex flex-col gap-px border-t border-border/60 pt-1"
-      data-sidebar-section="subscriptions"
-    >
-      <div className="mx-2 flex h-6 items-center gap-1">
-        <span className="px-1 section-label">Plans</span>
-        <span className="ml-auto pr-1 font-mono text-[10px] text-muted-foreground/40">
-          {newest ? age(newest, now) : ''}
-        </span>
-      </div>
+    <div className="mt-1 flex flex-col gap-px border-t border-border/60 pt-1" data-subscriptions={where}>
       {data.plans.map((plan) => (
-        <Row key={plan.id} now={now} peak={data.peak} plan={plan} />
+        <BarRow key={plan.id} now={now} peak={data.peak} plan={plan} where={where} />
       ))}
     </div>
   )
 }
 
 export default defineWebExtension({
-  slots: { sidebar: [{ component: Plans, order: 100 }] },
+  provides: [provide(BarFooter, (where) => <Plans where={where} />)],
 })

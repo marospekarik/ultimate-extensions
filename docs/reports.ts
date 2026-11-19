@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   lstat,
   mkdir,
@@ -5,12 +6,21 @@ import {
   readFile,
   realpath,
   rename,
+  rm,
   unlink,
+  writeFile,
 } from "node:fs/promises";
-import { basename, join, sep } from "node:path";
-import { parsed } from "./doc.ts";
-import { ARCHIVE, DAY, KEEP_DAYS, MAX_BYTES, REPORTS } from "./limits.ts";
-import type { Doc, Report } from "./refs.ts";
+import { basename, dirname, join, sep } from "node:path";
+import { hashOf, parsed } from "./doc.ts";
+import {
+  ARCHIVE,
+  DAY,
+  HISTORY,
+  KEEP_DAYS,
+  MAX_BYTES,
+  REPORTS,
+} from "./limits.ts";
+import type { Doc, Report, Version } from "./refs.ts";
 
 export type Homes = { userHome: string; home: string };
 
@@ -126,11 +136,105 @@ export async function sweep(host: Homes, now: number) {
   for (const file of await reportFiles(dir)) {
     if (file.modified >= now - KEEP_DAYS * DAY) continue;
     await unlink(join(dir, file.name)).then(
-      () => deleted.push(file.name),
+      async () => {
+        deleted.push(file.name);
+        await rm(historyDir(dir, file.name), { recursive: true, force: true });
+      },
       (error: unknown) => {
         if ((error as { code?: string } | null)?.code !== "ENOENT") throw error;
       },
     );
   }
   return { deleted };
+}
+
+const historyDir = (dir: string, name: string) =>
+  join(dir, ".history", name.replace(/\.md$/i, ""));
+
+const versionId = /^[0-9TZ-]+\.md$/;
+
+export async function writeAtomically(file: string, text: string, mode: number) {
+  const temp = join(dirname(file), `.${basename(file)}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temp, text, { flag: "wx", mode });
+    await rename(temp, file);
+  } catch (error) {
+    await unlink(temp).catch(absent);
+    throw error;
+  }
+}
+
+export function checkSave(text: unknown, base: unknown, current: string) {
+  if (typeof text !== "string" || typeof base !== "string")
+    throw new Error("Expected { path, text, base }");
+  if (Buffer.byteLength(text) > MAX_BYTES)
+    throw new Error("The doc is over 1 MB");
+  if (hashOf(current) !== base)
+    throw new Error("The doc changed since you opened it. Discard your draft and open it again.");
+  return text;
+}
+
+async function snapshotDir(host: Homes, name: string) {
+  const dir = (await realDir(host))!;
+  const history = join(dir, ".history");
+  await mkdir(history, { recursive: true });
+  const stat = await lstat(history);
+  if (!stat.isDirectory() || (await realpath(history)) !== history)
+    throw new Error(".history is not a folder inside the reports folder");
+  const target = historyDir(dir, name);
+  await mkdir(target, { recursive: true });
+  if ((await realpath(target)) !== target)
+    throw new Error("history folder is not inside the reports folder");
+  return target;
+}
+
+export async function writeReport(
+  host: Homes,
+  path: string,
+  text: unknown,
+  base: unknown,
+) {
+  const found = await reportFile(host, path);
+  if (!found) throw new Error(`No report ${path}`);
+  const current = await readFile(found.file, "utf8");
+  const next = checkSave(text, base, current);
+  if (next === current) return { hash: hashOf(current) };
+  const target = await snapshotDir(host, found.name);
+  const id = `${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
+  await writeFile(join(target, id), current, { flag: "wx" });
+  const old = (await readdir(target)).filter((n) => versionId.test(n)).toSorted();
+  for (const name of old.slice(0, Math.max(0, old.length - HISTORY)))
+    await unlink(join(target, name));
+  await writeAtomically(found.file, next, found.stat.mode);
+  return { hash: hashOf(next) };
+}
+
+export async function history(host: Homes, path: string): Promise<Version[]> {
+  const found = await reportFile(host, path);
+  const dir = await realDir(host);
+  if (!found || !dir) return [];
+  const target = historyDir(dir, found.name);
+  const names = await readdir(target).catch((error: unknown) => {
+    absent(error);
+    return [] as string[];
+  });
+  const versions: Version[] = [];
+  for (const name of names.filter((n) => versionId.test(n)).toSorted().reverse()) {
+    const stat = await lstat(join(target, name));
+    if (stat.isFile())
+      versions.push({ id: name, at: stat.mtimeMs, size: stat.size });
+  }
+  return versions;
+}
+
+export async function version(host: Homes, path: string, id: unknown) {
+  if (typeof id !== "string" || !versionId.test(id))
+    throw new Error("Not a version");
+  const found = await reportFile(host, path);
+  const dir = await realDir(host);
+  if (!found || !dir) throw new Error(`No report ${path}`);
+  const file = join(historyDir(dir, found.name), id);
+  const stat = await lstat(file).catch(absent);
+  if (!stat?.isFile()) throw new Error("No such version");
+  return { text: await readFile(file, "utf8") };
 }
