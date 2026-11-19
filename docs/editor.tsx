@@ -165,7 +165,7 @@ export function Editor({
     } else if (event.key === "Escape") {
       area.blur();
     } else if (event.key === "Enter" && !event.shiftKey && collapsed) {
-      if (kindOf(value) === "code" && (value.match(/^ {0,3}(?:`{3,}|~{3,})/gm)?.length ?? 0) % 2 === 1) return;
+      if (kindOf(value) === "code") return;
       event.preventDefault();
       const list = continueList(value.slice(0, start));
       if (list && list.empty) {

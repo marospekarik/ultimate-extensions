@@ -1054,12 +1054,11 @@ function Docs() {
   const startEditing = (text?: string) => {
     if (!path || data?.status !== "ok") return;
     const prefix = prefixOf(data.text, data.body);
-    const draft =
-      text === undefined
-        ? data.body
-        : text.startsWith(prefix)
-          ? text.slice(prefix.length)
-          : text;
+    if (text !== undefined && !text.startsWith(prefix)) {
+      setSaving({ error: "That version has different frontmatter and can't be restored here." });
+      return;
+    }
+    const draft = text === undefined ? data.body : text.slice(prefix.length);
     if (prefix + data.body !== data.text) {
       setSaving({ error: "This doc's frontmatter can't be edited here." });
       return;
@@ -1219,7 +1218,7 @@ function Docs() {
                         <span className="max-md:sr-only">Edit</span>
                       </Button>
                     )}
-                    {report && <Versions onPick={startEditing} path={data.path} />}
+                    {report && !kept && <Versions onPick={startEditing} path={data.path} />}
                     {!report && data.dirty && (
                       <Button
                         className={coarse}

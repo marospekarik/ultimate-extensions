@@ -151,7 +151,7 @@ export async function sweep(host: Homes, now: number) {
 const historyDir = (dir: string, name: string) =>
   join(dir, ".history", name.replace(/\.md$/i, ""));
 
-const versionId = /^[0-9TZ-]+\.md$/;
+const versionId = /^[0-9TZ]+(?:-[0-9TZ]+)*-[0-9a-f]{4}\.md$/;
 
 export async function writeAtomically(file: string, text: string, mode: number) {
   const temp = join(dirname(file), `.${basename(file)}.${randomUUID()}.tmp`);
@@ -172,6 +172,14 @@ export function checkSave(text: unknown, base: unknown, current: string) {
   if (hashOf(current) !== base)
     throw new Error("The doc changed since you opened it. Discard your draft and open it again.");
   return text;
+}
+
+async function confinedHistory(dir: string, name: string) {
+  const target = historyDir(dir, name);
+  const real = await realpath(target).catch(absent);
+  if (real !== undefined && real !== target)
+    throw new Error("history folder is not inside the reports folder");
+  return target;
 }
 
 async function snapshotDir(host: Homes, name: string) {
@@ -196,12 +204,13 @@ export async function writeReport(
 ) {
   const found = await reportFile(host, path);
   if (!found) throw new Error(`No report ${path}`);
+  if (found.archived) throw new Error("Kept reports are read-only");
   const current = await readFile(found.file, "utf8");
   const next = checkSave(text, base, current);
   if (next === current) return { hash: hashOf(current) };
   const target = await snapshotDir(host, found.name);
-  const id = `${new Date().toISOString().replace(/[:.]/g, "-")}.md`;
-  await writeFile(join(target, id), current, { flag: "wx" });
+  const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 4)}.md`;
+  await writeAtomically(join(target, id), current, 0o644);
   const old = (await readdir(target)).filter((n) => versionId.test(n)).toSorted();
   for (const name of old.slice(0, Math.max(0, old.length - HISTORY)))
     await unlink(join(target, name));
@@ -213,7 +222,7 @@ export async function history(host: Homes, path: string): Promise<Version[]> {
   const found = await reportFile(host, path);
   const dir = await realDir(host);
   if (!found || !dir) return [];
-  const target = historyDir(dir, found.name);
+  const target = await confinedHistory(dir, found.name);
   const names = await readdir(target).catch((error: unknown) => {
     absent(error);
     return [] as string[];
@@ -233,7 +242,7 @@ export async function version(host: Homes, path: string, id: unknown) {
   const found = await reportFile(host, path);
   const dir = await realDir(host);
   if (!found || !dir) throw new Error(`No report ${path}`);
-  const file = join(historyDir(dir, found.name), id);
+  const file = join(await confinedHistory(dir, found.name), id);
   const stat = await lstat(file).catch(absent);
   if (!stat?.isFile()) throw new Error("No such version");
   return { text: await readFile(file, "utf8") };
