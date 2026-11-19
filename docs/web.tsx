@@ -620,7 +620,7 @@ const sharable = (file: File) =>
 
 function exportError(error: unknown) {
   if (error instanceof DOMException && error.name === "NotAllowedError")
-    return "The browser blocked sharing this file. Tap Share again, or use Download.";
+    return `The browser blocked sharing this file. Tap Share again, or use Download. (${error.name}: ${error.message})`;
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -1258,7 +1258,8 @@ function Docs() {
         ? undefined
         : data.status === "ok"
           ? mdFile(data.path, data.text)
-          : viewed;
+          : viewed &&
+            new File([viewed], viewed.name, { type: "application/pdf" });
     if (prepared) return deliver(prepared, share);
     setSaving({ busy: true });
     const file =
