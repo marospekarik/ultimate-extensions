@@ -297,7 +297,7 @@ function Plans() {
   const newest = Math.max(0, ...data.plans.map((plan) => plan.at ?? 0))
   return (
     <div
-      className="mb-1 flex flex-col gap-px border-b border-border/60 pb-1"
+      className="mt-1 flex flex-col gap-px border-t border-border/60 pt-1"
       data-sidebar-section="subscriptions"
     >
       <div className="mx-2 flex h-6 items-center gap-1">
@@ -314,5 +314,5 @@ function Plans() {
 }
 
 export default defineWebExtension({
-  slots: { 'sidebar.top': [{ component: Plans, order: -10 }] },
+  slots: { sidebar: [{ component: Plans, order: 100 }] },
 })

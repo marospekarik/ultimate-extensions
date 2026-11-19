@@ -1,4 +1,4 @@
-Claude Pro's, Ollama Cloud's and ChatGPT's Codex subscription usage in the Agent sidebar's **Plans** block, with Ollama's twice-as-expensive hours marked in amber.
+Claude Pro's, Ollama Cloud's and ChatGPT's Codex subscription usage in the **Plans** block at the bottom of the left sidebar, with Ollama's twice-as-expensive hours marked in amber.
 
 **Which plans show.** `"subscriptions": { "plans": ["claude", "ollama", "codex"] }` in `~/.ultimate/settings.json`, or in a project's `.ultimate/settings.json` (which replaces the user's list for that project), names the rows in their order. A plan left out is neither shown nor polled; `[]` hides the block. Without the setting, every plan with a credential here shows: Claude with a `claude` CLI login (or a stored reading), Ollama with its key, Codex with Pi's ChatGPT login. A plan named in the list without its credential shows `add key` or `sign in` instead of a reading. Claude's late-session compaction below reads Claude's readings whether its row is shown or not.
 
