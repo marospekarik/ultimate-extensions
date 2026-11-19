@@ -10,6 +10,10 @@ export const KEEP_DAYS = 30;
 
 export const MAX_BYTES = 1024 * 1024;
 
+export const MAX_PDF_BYTES = 20 * 1024 * 1024;
+
+export const isPdf = (path: string) => path.toLowerCase().endsWith(".pdf");
+
 export const isReport = (path: string) => path.startsWith(REPORTS);
 
 export const shownPath = (selected: string | null, paths: readonly string[]) =>

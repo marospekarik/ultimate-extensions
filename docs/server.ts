@@ -6,7 +6,14 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
 import { hashOf, parsed } from "./doc.ts";
-import { DAY, limits, MAX_BYTES, REPORTS } from "./limits.ts";
+import {
+  DAY,
+  isPdf,
+  limits,
+  MAX_BYTES,
+  MAX_PDF_BYTES,
+  REPORTS,
+} from "./limits.ts";
 import { DocCommentsEntry } from "./refs.ts";
 import type { Doc, DocComment, DocComments } from "./refs.ts";
 import {
@@ -70,7 +77,7 @@ export default function docs(host: Host) {
 }
 
 const showable = (path: string) =>
-  path.toLowerCase().endsWith(".md") &&
+  /\.(md|pdf)$/i.test(path) &&
   path.split("/").every((part) => part && !part.startsWith("."));
 
 async function list(host: Pick<Host, "projectRoot">): Promise<string[]> {
@@ -82,6 +89,8 @@ async function list(host: Pick<Host, "projectRoot">): Promise<string[]> {
     "--",
     "*.md",
     "*.MD",
+    "*.pdf",
+    "*.PDF",
   ]).catch((error: unknown) => {
     if (error instanceof Error && /not a git repository/i.test(error.message))
       return { stdout: "", stderr: "" };
@@ -101,9 +110,16 @@ async function read(
   if (!stat?.isFile()) return { status: "missing", path };
   if ((await realpath(file)) !== file || !file.startsWith(root + sep))
     return { status: "missing", path };
+  if (isPdf(path))
+    return { status: "pdf", path, size: stat.size, modified: stat.mtimeMs };
   if (stat.size > MAX_BYTES)
     return { status: "tooLarge", path, size: stat.size };
-  const doc = parsed(path, await readFile(file, "utf8"), stat.size, stat.mtimeMs);
+  const doc = parsed(
+    path,
+    await readFile(file, "utf8"),
+    stat.size,
+    stat.mtimeMs,
+  );
   const { stdout } = await runGit(host.projectRoot, [
     "status",
     "--porcelain",
@@ -119,9 +135,24 @@ async function repoFile(host: Pick<Host, "projectRoot">, path: string) {
   const root = await realpath(host.projectRoot);
   const file = join(root, path);
   const stat = await lstat(file).catch(missing);
-  if (!stat?.isFile() || (await realpath(file)) !== file || !file.startsWith(root + sep))
+  if (
+    !stat?.isFile() ||
+    (await realpath(file)) !== file ||
+    !file.startsWith(root + sep)
+  )
     throw new Error(`No doc ${path}`);
   return { file, stat };
+}
+
+async function pdfBytes(host: Host, path: string) {
+  if (!isPdf(path)) throw new Error(`Not a PDF: ${path}`);
+  const found = path.startsWith(REPORTS)
+    ? await reportFile(host, path)
+    : await repoFile(host, path);
+  if (!found) throw new Error(`No PDF ${path}`);
+  if (found.stat.size > MAX_PDF_BYTES)
+    throw new Error(`${path} is over ${MAX_PDF_BYTES / 1024 / 1024} MB`);
+  return { data: (await readFile(found.file)).toString("base64") };
 }
 
 async function writeDoc(
@@ -146,8 +177,19 @@ async function commitDoc(
     typeof message === "string" && message.trim()
       ? message.trim().slice(0, 200)
       : `Docs: edit ${path}`;
-  await runGit(host.projectRoot, ["commit", "-m", subject, "--only", "--", path]);
-  const { stdout } = await runGit(host.projectRoot, ["rev-parse", "--short", "HEAD"]);
+  await runGit(host.projectRoot, [
+    "commit",
+    "-m",
+    subject,
+    "--only",
+    "--",
+    path,
+  ]);
+  const { stdout } = await runGit(host.projectRoot, [
+    "rev-parse",
+    "--short",
+    "HEAD",
+  ]);
   return { commit: stdout.trim() };
 }
 
@@ -238,10 +280,12 @@ export const actions = {
     const path = pathOf(args);
     return path.startsWith(REPORTS) ? readReport(host, path) : read(host, path);
   },
+  file: (args: unknown, { host }: Ctx) => pdfBytes(host, pathOf(args)),
   keep: (args: unknown, { host }: Ctx) => keep(host, pathOf(args)),
   write: (args: unknown, { host }: Ctx) => {
     const { text, base } = args as { text?: unknown; base?: unknown };
     const path = pathOf(args);
+    if (isPdf(path)) throw new Error("PDFs are not editable");
     return path.startsWith(REPORTS)
       ? writeReport(host, path, text, base)
       : writeDoc(host, path, text, base);
@@ -252,6 +296,7 @@ export const actions = {
   commit: (args: unknown, { host }: Ctx) => {
     const path = pathOf(args);
     if (path.startsWith(REPORTS)) throw new Error("Reports are not in git");
+    if (isPdf(path)) throw new Error("PDFs are not editable");
     return commitDoc(host, path, (args as { message?: unknown }).message);
   },
   sweep: (_args: unknown, { host }: Ctx) => sweep(host, Date.now()),

@@ -16,6 +16,7 @@ import {
   ARCHIVE,
   DAY,
   HISTORY,
+  isPdf,
   KEEP_DAYS,
   MAX_BYTES,
   REPORTS,
@@ -34,9 +35,7 @@ export const reportsDir = (host: Homes) =>
   join(host.userHome, ".ultimate", "reports", basename(host.home));
 
 const reportName = (name: string) =>
-  name.toLowerCase().endsWith(".md") &&
-  !name.startsWith(".") &&
-  !/[/\\]/.test(name);
+  /\.(md|pdf)$/i.test(name) && !name.startsWith(".") && !/[/\\]/.test(name);
 
 const realDir = (host: Homes) => realpath(reportsDir(host)).catch(absent);
 
@@ -103,6 +102,13 @@ export async function readReport(host: Homes, requested: string): Promise<Doc> {
     (moved ? await reportFile(host, moved) : undefined);
   const path = found?.archived ? `${ARCHIVE}${found.name}` : requested;
   if (!found) return { status: "missing", path };
+  if (isPdf(found.name))
+    return {
+      status: "pdf",
+      path,
+      size: found.stat.size,
+      modified: found.stat.mtimeMs,
+    };
   if (found.stat.size > MAX_BYTES)
     return { status: "tooLarge", path, size: found.stat.size };
   return parsed(
@@ -153,7 +159,11 @@ const historyDir = (dir: string, name: string) =>
 
 const versionId = /^[0-9TZ]+(?:-[0-9TZ]+)*-[0-9a-f]{4}\.md$/;
 
-export async function writeAtomically(file: string, text: string, mode: number) {
+export async function writeAtomically(
+  file: string,
+  text: string,
+  mode: number,
+) {
   const temp = join(dirname(file), `.${basename(file)}.${randomUUID()}.tmp`);
   try {
     await writeFile(temp, text, { flag: "wx", mode });
@@ -170,7 +180,9 @@ export function checkSave(text: unknown, base: unknown, current: string) {
   if (Buffer.byteLength(text) > MAX_BYTES)
     throw new Error("The doc is over 1 MB");
   if (hashOf(current) !== base)
-    throw new Error("The doc changed since you opened it. Discard your draft and open it again.");
+    throw new Error(
+      "The doc changed since you opened it. Discard your draft and open it again.",
+    );
   return text;
 }
 
@@ -205,13 +217,16 @@ export async function writeReport(
   const found = await reportFile(host, path);
   if (!found) throw new Error(`No report ${path}`);
   if (found.archived) throw new Error("Kept reports are read-only");
+  if (isPdf(found.name)) throw new Error("PDFs are not editable");
   const current = await readFile(found.file, "utf8");
   const next = checkSave(text, base, current);
   if (next === current) return { hash: hashOf(current) };
   const target = await snapshotDir(host, found.name);
   const id = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 4)}.md`;
   await writeAtomically(join(target, id), current, 0o644);
-  const old = (await readdir(target)).filter((n) => versionId.test(n)).toSorted();
+  const old = (await readdir(target))
+    .filter((n) => versionId.test(n))
+    .toSorted();
   for (const name of old.slice(0, Math.max(0, old.length - HISTORY)))
     await unlink(join(target, name));
   await writeAtomically(found.file, next, found.stat.mode);
@@ -228,7 +243,10 @@ export async function history(host: Homes, path: string): Promise<Version[]> {
     return [] as string[];
   });
   const versions: Version[] = [];
-  for (const name of names.filter((n) => versionId.test(n)).toSorted().reverse()) {
+  for (const name of names
+    .filter((n) => versionId.test(n))
+    .toSorted()
+    .reverse()) {
     const stat = await lstat(join(target, name));
     if (stat.isFile())
       versions.push({ id: name, at: stat.mtimeMs, size: stat.size });

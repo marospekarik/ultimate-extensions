@@ -9,6 +9,7 @@ import {
   ArrowRightIcon,
   ChevronDownIcon,
   DownloadIcon,
+  ExternalLinkIcon,
   FileTextIcon,
   ListIcon,
   MessageSquareIcon,
@@ -69,6 +70,7 @@ import { docPath, findHeading, headingIds, linkify } from "./links.ts";
 import { ARCHIVE, DAY, isReport, limits, shownPath } from "./limits.ts";
 import {
   CommitAction,
+  FileAction,
   HistoryAction,
   KeepAction,
   ListAction,
@@ -87,7 +89,9 @@ type Nav = { depth: number };
 
 const parseTarget = (url: URL): Target | undefined => {
   const path = url.searchParams.get("doc");
-  return path ? { path, hash: decodeURIComponent(url.hash.slice(1)) } : undefined;
+  return path
+    ? { path, hash: decodeURIComponent(url.hash.slice(1)) }
+    : undefined;
 };
 
 let requested: (Target & { push?: boolean }) | undefined = parseTarget(
@@ -162,13 +166,16 @@ function DocLink() {
 const absoluteLinks = (body: string, from: string) =>
   body
     .replace(
-      /\]\(([^)\s]+?\.md)((?:#[^)\s]*)?)\)/gi,
+      /\]\(([^)\s]+?\.(?:md|pdf))((?:#[^)\s]*)?)\)/gi,
       (match, target: string, hash: string) => {
         const path = docPath(target, from);
         return path ? `](/${path}${hash})` : match;
       },
     )
-    .replace(/\]\((#[^)\s]*)\)/g, (_match, hash: string) => `](/${from}${hash})`);
+    .replace(
+      /\]\((#[^)\s]*)\)/g,
+      (_match, hash: string) => `](/${from}${hash})`,
+    );
 
 function Link({
   href,
@@ -586,9 +593,23 @@ function Body({
   );
 }
 
+function pdfFile(path: string, data: string) {
+  const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+  return new File([bytes], path.split("/").pop() ?? "doc.pdf", {
+    type: "application/pdf",
+  });
+}
+
 async function saveDoc(path: string, text: string) {
-  const name = path.split("/").pop() ?? "doc.md";
-  const file = new File([text], name, { type: "text/markdown" });
+  await saveFile(
+    new File([text], path.split("/").pop() ?? "doc.md", {
+      type: "text/markdown",
+    }),
+  );
+}
+
+async function saveFile(file: File) {
+  const name = file.name;
   if (navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file] });
@@ -611,6 +632,57 @@ const coarse =
 
 type Pending = { comments: DocComment[]; note: string };
 const empty: Pending = { comments: [], note: "" };
+
+function PdfView({ path, phone }: { path: string; phone: boolean }) {
+  const pdf = useAction(FileAction, { path });
+  const file = useMemo(
+    () => (pdf.data ? pdfFile(path, pdf.data.data) : undefined),
+    [path, pdf.data],
+  );
+  const url = useMemo(() => file && URL.createObjectURL(file), [file]);
+  useEffect(() => () => (url ? URL.revokeObjectURL(url) : undefined), [url]);
+  if (pdf.error)
+    return (
+      <p className="text-error font-mono text-[12px]">{pdf.error.message}</p>
+    );
+  if (!file || !url)
+    return (
+      <p className="text-muted-foreground font-mono text-[12px]">loading…</p>
+    );
+  if (phone || touchKeyboard())
+    return (
+      <div className="border-border/70 bg-secondary/40 mx-auto flex max-w-sm flex-col items-center gap-3 rounded-lg border p-6 text-center">
+        <FileTextIcon className="text-brand size-8" />
+        <p className="max-w-full font-mono text-[12.5px] break-all">
+          {file.name}
+        </p>
+        <p className="text-muted-foreground font-mono text-[11.5px]">
+          {formatBytes(file.size)} · PDF
+        </p>
+        <Button asChild className="h-11 w-full text-[14px]">
+          <a href={url} rel="noreferrer" target="_blank">
+            <ExternalLinkIcon />
+            Open
+          </a>
+        </Button>
+        <Button
+          className="h-11 w-full text-[14px]"
+          onClick={() => void saveFile(file)}
+          variant="outline"
+        >
+          <DownloadIcon />
+          Download
+        </Button>
+      </div>
+    );
+  return (
+    <iframe
+      className="border-border/70 h-[calc(100dvh-12.5rem)] w-full rounded-md border bg-white"
+      src={url}
+      title={file.name}
+    />
+  );
+}
 
 function Composer({
   draft,
@@ -1055,7 +1127,10 @@ function Docs() {
     if (!path || data?.status !== "ok") return;
     const prefix = prefixOf(data.text, data.body);
     if (text !== undefined && !text.startsWith(prefix)) {
-      setSaving({ error: "That version has different frontmatter and can't be restored here." });
+      setSaving({
+        error:
+          "That version has different frontmatter and can't be restored here.",
+      });
       return;
     }
     const draft = text === undefined ? data.body : text.slice(prefix.length);
@@ -1064,7 +1139,13 @@ function Docs() {
       return;
     }
     setSaving({});
-    setEditing({ path, draft, base: data.hash, prefix, note: text === undefined ? undefined : "restored" });
+    setEditing({
+      path,
+      draft,
+      base: data.hash,
+      prefix,
+      note: text === undefined ? undefined : "restored",
+    });
   };
   const stopEditing = () => {
     setEditing(null);
@@ -1163,7 +1244,7 @@ function Docs() {
         )}
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="border-border/60 text-muted-foreground flex h-9 shrink-0 items-center gap-3 border-b px-4 font-mono text-[11.5px] max-md:px-2 max-md:pl-4 pointer-coarse:h-11">
-            {data?.status === "ok" && (
+            {(data?.status === "ok" || data?.status === "pdf") && (
               <span className="min-w-0 truncate">
                 {formatBytes(data.size)} ·{" "}
                 <span className="max-md:hidden">changed </span>
@@ -1178,7 +1259,10 @@ function Docs() {
               </span>
             )}
             {(keeping.error ?? saving.error) && (
-              <span className="text-error truncate" title={keeping.error ?? saving.error}>
+              <span
+                className="text-error truncate"
+                title={keeping.error ?? saving.error}
+              >
                 {keeping.error ?? saving.error}
               </span>
             )}
@@ -1218,7 +1302,9 @@ function Docs() {
                         <span className="max-md:sr-only">Edit</span>
                       </Button>
                     )}
-                    {report && !kept && <Versions onPick={startEditing} path={data.path} />}
+                    {report && !kept && (
+                      <Versions onPick={startEditing} path={data.path} />
+                    )}
                     {!report && data.dirty && (
                       <Button
                         className={coarse}
@@ -1260,10 +1346,16 @@ function Docs() {
               </Button>
               <Button
                 className={coarse}
-                disabled={data?.status !== "ok"}
-                onClick={() =>
-                  data?.status === "ok" && void saveDoc(data.path, data.text)
-                }
+                disabled={data?.status !== "ok" && data?.status !== "pdf"}
+                onClick={() => {
+                  if (data?.status === "ok") void saveDoc(data.path, data.text);
+                  if (data?.status === "pdf")
+                    void api
+                      .action(FileAction, { path: data.path })
+                      .then(({ data: bytes }) =>
+                        saveFile(pdfFile(data.path, bytes)),
+                      );
+                }}
                 size="xs"
                 title="Save the file, or share it from a phone"
                 variant="ghost"
@@ -1296,7 +1388,12 @@ function Docs() {
             className="min-h-0 flex-1 overflow-y-auto px-6 py-5 max-md:px-4 max-md:py-4 [&_img]:h-auto [&_img]:max-w-full"
             ref={main}
           >
-            <div className="mx-auto max-w-3xl">
+            <div
+              className={cn(
+                "mx-auto",
+                data?.status === "pdf" ? "max-w-5xl" : "max-w-3xl",
+              )}
+            >
               {(list.error || doc.error) && (
                 <p className="text-error font-mono text-[12px]">
                   {(list.error ?? doc.error)?.message}
@@ -1336,6 +1433,9 @@ function Docs() {
                   }
                   text={edit.draft}
                 />
+              )}
+              {data?.status === "pdf" && (
+                <PdfView path={data.path} phone={drawer} />
               )}
               {data?.status === "ok" && !edit && (
                 <Body doc={data} known={known} onComment={setDraft} />

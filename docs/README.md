@@ -9,6 +9,7 @@ A Docs app for any repository, with editing: every git-tracked Markdown file ren
 - **Back.** Opening another doc from a link pushes a browser history entry; the header shows a back arrow, and the phone back gesture returns to the previous doc.
 - **Agents.** A prompt section (`docs_links`, `server.ts`) tells every agent to link what its reports and docs mention, with the same slug rule.
 - **Download.** The doc's bar has a **Download** button that saves the file as stored, frontmatter included, under its own name. On a phone that can share files it opens the share sheet instead.
+- **PDFs.** Tracked `*.pdf` files and PDFs in the reports folder (or `archive/`) appear in the file list and open from links (`[signed](/wiki/x/signed.pdf)`) with the same back arrow. On desktop the PDF renders inline in an `<iframe>` (the browser's own viewer); on a phone, or any touch device, where inline PDFs often do not render, a card with **Open** (new tab) and **Download** replaces it. **Download** in the bar saves it, or opens the share sheet on a phone. The bytes travel through the `file` action as base64 (max 20 MB) and become a blob with type `application/pdf`; extensions have no raw HTTP routes. PDFs are not commentable-by-selection or editable.
 - **Comments.** Select text and click **Comment** (on touch, **Comment on selection** at the foot of the screen), or **Comment on doc** for the doc as a whole. Pending comments are kept per doc in durable UI state until sent. **Send (N)** posts one `docs.comments` input to the conversation the **to** picker names (default @ultimate). It steers a busy recipient like a typed message. The recipient sees a card on the user's side; the model reads each comment with its heading and quote, and is told to read the doc (for a report, at its absolute path).
 
 ## Editing
@@ -31,9 +32,10 @@ Long one-off output (a setup manual, an investigation, a runbook for one machine
 
 ## Actions
 
-- `list` → every tracked `*.md` path, sorted.
+- `list` → every tracked `*.md` and `*.pdf` path, sorted.
 - `reports` → `{ folder, reports }`: the folder (`~/.ultimate/reports/<name>-<hash>/`) and its reports, `{ path, size, modified, archived, expires? }`, newest first, then `archive/`'s.
 - `read { path }` → `{ status: 'ok', path, frontmatter, body, size, modified }`, or `missing` (not tracked, gone, or a report that does not exist) / `tooLarge` (over 1 MB). The surface shows `Not found: <path>` for a missing doc; it never falls back to another doc. `path` is one of `list`'s, or a report's `.reports/<name>.md` / `.reports/archive/<name>.md`.
+- `file { path }` → `{ data }`: a PDF's bytes, base64, only for a `.pdf` path that `list` returned or a report PDF; `read` of such a path returns `{ status: 'pdf', path, size, modified }`.
 - `write { path, text, base }`, **user only** → `{ hash }`. `history { path }` → a report's versions; `version { path, id }` → one's text. `commit { path, message? }`, **user only**, repo docs → `{ commit }`.
 - `send { conversation, path, comments, note? }`, **user only**: at most 50 comments, each up to 4,000 characters with a quote up to 1,000.
 - `keep { path }`, **user only**: moves a report into `archive/` and returns its new path.
@@ -41,7 +43,7 @@ Long one-off output (a setup manual, an investigation, a runbook for one machine
 
 ## What it never shows or does
 
-- **Repo docs: only `git ls-files '*.md'` from the project root.** Untracked and ignored files (`.env.local`) never appear. No path with a segment starting with `.` appears either (`.env*`, `.claude/`, `.ultimate/`). If the project is not a git repo, the list is empty.
+- **Repo docs: only `git ls-files '*.md' '*.pdf'` from the project root.** Untracked and ignored files (`.env.local`) never appear. No path with a segment starting with `.` appears either (`.env*`, `.claude/`, `.ultimate/`). If the project is not a git repo, the list is empty.
 - **`read` of a repo doc accepts only a path that `list` returned.** It then checks that the real path is the same regular file inside the project root, so a tracked symlink is refused.
 - **Writes only through `write` and `commit`, both user only.** `write` accepts a path `list` returned (or a report), re-checks the real path like `read`, and needs the current hash. `commit` runs `git commit --only` on one listed path and nothing else (no add, push or reset).
 - **Reports are the one exception, and only inside the reports folder.** It reads only regular `.md` files directly in the folder or in its `archive/`; it refuses symlinks, folders, names starting with `.`, and any path whose real path is not that file inside the folder. Its writes are `write` (snapshot into `.history/`, then temp file and rename), `keep` (user only: creates `archive/` if needed and `rename`s the report into it, never over an existing file) and the sweep (`unlink` of a top-level report over 30 days old; never `archive/`, never anything but `.md`).

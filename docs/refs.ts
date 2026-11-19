@@ -33,7 +33,9 @@ export type Doc =
       dirty?: boolean;
     }
   /** Not found (not tracked, gone from the work tree, a report deleted or never written), or over the size cap. */
-  | { status: "missing" | "tooLarge"; path: string; size?: number };
+  | { status: "missing" | "tooLarge"; path: string; size?: number }
+  /** A PDF: the viewer fetches its bytes with `file`. `path` is where it is now. */
+  | { status: "pdf"; path: string; size: number; modified: number };
 
 export type Report = {
   path: string;
@@ -99,3 +101,9 @@ export const CommitAction = actionRef<
   { path: string; message?: string },
   { commit: string }
 >("docs", "commit");
+
+/** `{ path }` of a PDF that `list` or `reports` returned → its bytes, base64, at most 20 MB. */
+export const FileAction = actionRef<{ path: string }, { data: string }>(
+  "docs",
+  "file",
+);

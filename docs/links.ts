@@ -9,7 +9,7 @@ export function docPath(href: string, from?: string) {
   )
     return undefined;
   const target = href.split("#")[0].split("?")[0];
-  if (!/\.md$/i.test(target)) return undefined;
+  if (!/\.(md|pdf)$/i.test(target)) return undefined;
   const base =
     target.startsWith("/") || !from ? [] : from.split("/").slice(0, -1);
   const parts: string[] = [];
