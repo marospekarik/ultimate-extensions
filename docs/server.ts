@@ -1,7 +1,7 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
-import { defineExtension } from "@earendil-works/pi-durable";
+import { defineExtension, section } from "@earendil-works/pi-durable";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
@@ -46,7 +46,16 @@ export default function docs(host: Host) {
     stopSweeping = () => clearInterval(timer);
   });
   host.onClose(() => Promise.resolve(stopSweeping?.()));
-  return defineExtension({ name: "docs" });
+  return defineExtension({
+    name: "docs",
+    sections: [
+      section(
+        "docs_links",
+        () =>
+          "When you write a report or doc, link what it mentions so the reader can tap it in Docs: a repo file as [name](/path/to/file.md) with a leading slash, and only a git-tracked file (commit it first); a report as [name](/.reports/YYYY-MM-DD-slug.md); a section as [step 3B](#step-3b) or [name](/path.md#section), where the anchor is the heading in lowercase, punctuation removed, spaces as hyphens (GitHub style; a repeated heading gets -1, -2); a site as a real link or a bare domain such as skat.dk. A doc that uses short ids (02b, step 3B) starts with a reference table whose rows link each id to its file or section.",
+      ),
+    ],
+  });
 }
 
 const showable = (path: string) =>

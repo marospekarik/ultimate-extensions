@@ -1,6 +1,7 @@
 import type { ConversationId, EntryRecord } from "@earendil-works/pi-durable";
 import {
   ArchiveIcon,
+  ArrowLeftIcon,
   ArrowRightIcon,
   ChevronDownIcon,
   DownloadIcon,
@@ -58,6 +59,7 @@ import {
   useViewport,
 } from "@/sdk";
 import type { Viewport } from "@/sdk";
+import { docPath, headingIds, linkify } from "./links.ts";
 import { ARCHIVE, DAY, isReport, limits, shownPath } from "./limits.ts";
 import {
   KeepAction,
@@ -70,18 +72,39 @@ import type { Doc, DocComment, DocComments, Report } from "./refs.ts";
 
 const StandingDoc = docRef<Record<string, number>>("ultimate.standing-agents");
 
-let requested: string | undefined =
-  new URL(location.href).searchParams.get("doc") ?? undefined;
+type Target = { path: string; hash: string };
+type Nav = { depth: number };
+
+const parseTarget = (url: URL): Target | undefined => {
+  const path = url.searchParams.get("doc");
+  return path ? { path, hash: decodeURIComponent(url.hash.slice(1)) } : undefined;
+};
+
+let requested: (Target & { push?: boolean }) | undefined = parseTarget(
+  new URL(location.href),
+);
+let anchor = { hash: requested?.hash ?? "" };
 const listeners = new Set<() => void>();
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
   return () => void listeners.delete(listener);
 };
-
-export function openDoc(path: string) {
-  requested = path;
+const notify = () => {
   for (const listener of listeners) listener();
+};
+const depth = () => (history.state as Nav | null)?.depth ?? 0;
+
+export function openDoc(path: string, hash = "") {
+  requested = { path, hash, push: true };
+  notify();
 }
+
+const docUrl = (path: string, hash: string) => {
+  const url = new URL(location.href);
+  url.searchParams.set("doc", path);
+  url.hash = hash ? `#${encodeURIComponent(hash)}` : "";
+  return url;
+};
 
 const useSelected = () => useExtensionUiState<string | null>("selected", null);
 
@@ -92,9 +115,28 @@ function DocLink() {
   useEffect(() => {
     if (wanted === undefined) return;
     requested = undefined;
-    setSelected(wanted);
+    anchor = { hash: wanted.hash };
+    if (wanted.push && wanted.path !== selected)
+      history.pushState(
+        { depth: depth() + 1 } satisfies Nav,
+        "",
+        docUrl(wanted.path, wanted.hash),
+      );
+    setSelected(wanted.path);
     showSurface("docs");
-  }, [wanted, setSelected, showSurface]);
+    notify();
+  }, [wanted, selected, setSelected, showSurface]);
+  useEffect(() => {
+    const back = () => {
+      const target = parseTarget(new URL(location.href));
+      if (!target) return;
+      anchor = { hash: target.hash };
+      setSelected(target.path);
+      notify();
+    };
+    window.addEventListener("popstate", back);
+    return () => window.removeEventListener("popstate", back);
+  }, [setSelected]);
   useEffect(() => {
     if (requested !== undefined) return;
     const url = new URL(location.href);
@@ -107,35 +149,16 @@ function DocLink() {
   return null;
 }
 
-function docPath(href: string, from?: string) {
-  if (
-    /^[a-z][a-z0-9+.-]*:/i.test(href) ||
-    href.startsWith("#") ||
-    href.startsWith("//")
-  )
-    return undefined;
-  const target = href.split("#")[0].split("?")[0];
-  if (!/\.md$/i.test(target)) return undefined;
-  const base =
-    target.startsWith("/") || !from ? [] : from.split("/").slice(0, -1);
-  const parts: string[] = [];
-  for (const part of [...base, ...target.split("/")]) {
-    if (part === "" || part === ".") continue;
-    if (part === "..") {
-      if (!parts.pop()) return undefined;
-    } else parts.push(part);
-  }
-  return parts.join("/");
-}
-
 const absoluteLinks = (body: string, from: string) =>
-  body.replace(
-    /\]\(([^)\s]+?\.md)((?:#[^)\s]*)?)\)/gi,
-    (match, target: string, hash: string) => {
-      const path = docPath(target, from);
-      return path ? `](/${path}${hash})` : match;
-    },
-  );
+  body
+    .replace(
+      /\]\(([^)\s]+?\.md)((?:#[^)\s]*)?)\)/gi,
+      (match, target: string, hash: string) => {
+        const path = docPath(target, from);
+        return path ? `](/${path}${hash})` : match;
+      },
+    )
+    .replace(/\]\((#[^)\s]*)\)/g, (_match, hash: string) => `](/${from}${hash})`);
 
 function Link({
   href,
@@ -148,14 +171,15 @@ function Link({
 }) {
   const path = docPath(href);
   if (!path) return core;
+  const hash = decodeURIComponent(href.split("#")[1] ?? "");
   return (
     <a
-      href={`?doc=${encodeURIComponent(path)}`}
+      href={docUrl(path, hash).search + (hash ? `#${hash}` : "")}
       onClick={(event) => {
         event.preventDefault();
-        openDoc(path);
+        openDoc(path, hash);
       }}
-      title={`Open ${path} in Docs`}
+      title={`Open ${path}${hash ? `#${hash}` : ""} in Docs`}
     >
       {children}
     </a>
@@ -434,12 +458,47 @@ type Draft = { quote?: string; heading?: string };
 
 function Body({
   doc,
+  known,
   onComment,
 }: {
   doc: Extract<Doc, { status: "ok" }>;
+  known: Set<string>;
   onComment: (draft: Draft) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const target = useSyncExternalStore(subscribe, () => anchor);
+  useEffect(() => {
+    const root = ref.current;
+    if (!root) return undefined;
+    const place = () => {
+      const headings = [...root.querySelectorAll("h1, h2, h3, h4, h5, h6")];
+      const ids = headingIds(headings.map((item) => item.textContent ?? ""));
+      headings.forEach((item, index) => {
+        if (item.id !== ids[index]) item.id = ids[index];
+      });
+      return ids;
+    };
+    const jump = () => {
+      if (!target.hash) return;
+      const ids = place();
+      const found = ids.indexOf(target.hash);
+      if (found < 0) return;
+      root
+        .querySelectorAll("h1, h2, h3, h4, h5, h6")
+        [found].scrollIntoView({ block: "start" });
+    };
+    place();
+    jump();
+    const watch = new MutationObserver(() => {
+      place();
+    });
+    watch.observe(root, { childList: true, subtree: true });
+    const settle = setTimeout(jump, 150);
+    return () => {
+      clearTimeout(settle);
+      watch.disconnect();
+    };
+  }, [doc.body, target]);
   const [pick, setPick] = useState<(Draft & { top: number }) | null>(null);
   const touch = touchKeyboard();
   const select = () => {
@@ -490,7 +549,7 @@ function Body({
         mode="static"
         parseIncompleteMarkdown={false}
       >
-        {absoluteLinks(doc.body, doc.path)}
+        {linkify(absoluteLinks(doc.body, doc.path), doc.path, known)}
       </MessageResponse>
       {pick && (
         <Button
@@ -867,6 +926,7 @@ function Docs() {
   const reports = useAction(ReportsAction);
   const [selected, setSelected] = useSelected();
   const paths = list.data ?? [];
+  const known = useMemo(() => new Set(paths), [paths]);
   const reportList = reports.data?.reports ?? [];
   const path = shownPath(selected, paths);
   const doc = useAction(
@@ -919,7 +979,7 @@ function Docs() {
   };
   const main = useRef<HTMLElement>(null);
   useEffect(() => {
-    main.current?.scrollTo({ top: 0 });
+    if (!anchor.hash) main.current?.scrollTo({ top: 0 });
   }, [path]);
   const data = doc.data;
   const viewport: Viewport = useViewport();
@@ -955,6 +1015,17 @@ function Docs() {
             variant="ghost"
           >
             <ListIcon className="size-4" />
+          </Button>
+        )}
+        {depth() > 0 && (
+          <Button
+            aria-label="Back to the previous doc"
+            className="text-muted-foreground hover:text-foreground size-7 shrink-0 pointer-coarse:size-9"
+            onClick={() => history.back()}
+            size="icon"
+            variant="ghost"
+          >
+            <ArrowLeftIcon className="size-4" />
           </Button>
         )}
         <Path path={path} />
@@ -1078,7 +1149,7 @@ function Docs() {
                 </p>
               )}
               {data?.status === "ok" && (
-                <Body doc={data} onComment={setDraft} />
+                <Body doc={data} known={known} onComment={setDraft} />
               )}
             </div>
           </main>
