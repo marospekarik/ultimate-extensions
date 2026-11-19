@@ -607,7 +607,7 @@ function pdfFile(path: string, data: string) {
 
 const mdFile = (path: string, text: string) =>
   new File([text], path.split("/").pop() ?? "doc.md", {
-    type: "text/markdown",
+    type: "text/plain",
   });
 
 const canShareFiles = () =>
@@ -615,14 +615,23 @@ const canShareFiles = () =>
     files: [new File([], "doc.pdf", { type: "application/pdf" })],
   }) ?? false;
 
+const sharable = (file: File) =>
+  navigator.canShare?.({ files: [file] }) ?? false;
+
+function exportError(error: unknown) {
+  if (error instanceof DOMException && error.name === "NotAllowedError")
+    return "The browser blocked sharing this file. Tap Share again, or use Download.";
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function saveFile(file: File, share: boolean) {
   const name = file.name;
-  if (share && navigator.canShare?.({ files: [file] })) {
+  if (share && sharable(file)) {
     try {
       await navigator.share({ files: [file] });
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "AbortError"))
-        throw error;
+        throw new Error(exportError(error));
     }
     return;
   }
@@ -659,12 +668,25 @@ const iconCoarse = "pointer-coarse:size-11";
 type Pending = { comments: DocComment[]; note: string };
 const empty: Pending = { comments: [], note: "" };
 
-function PdfView({ path, phone }: { path: string; phone: boolean }) {
+function PdfView({
+  path,
+  phone,
+  onFile,
+}: {
+  path: string;
+  phone: boolean;
+  onFile: (file: File | undefined) => void;
+}) {
   const pdf = useAction(FileAction, { path });
   const file = useMemo(
     () => (pdf.data ? pdfFile(path, pdf.data.data) : undefined),
     [path, pdf.data],
   );
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    onFile(file);
+    return () => onFile(undefined);
+  }, [file, onFile]);
   const url = useMemo(() => file && URL.createObjectURL(file), [file]);
   useEffect(() => () => (url ? URL.revokeObjectURL(url) : undefined), [url]);
   if (pdf.error)
@@ -693,12 +715,18 @@ function PdfView({ path, phone }: { path: string; phone: boolean }) {
         </Button>
         <Button
           className="h-11 w-full text-[14px]"
-          onClick={() => void saveFile(file, touchKeyboard())}
+          onClick={() => {
+            setError(undefined);
+            saveFile(file, touchKeyboard()).catch((failure: unknown) =>
+              setError(exportError(failure)),
+            );
+          }}
           variant="outline"
         >
           <DownloadIcon />
           Download
         </Button>
+        {error && <p className="text-error font-mono text-[12px]">{error}</p>}
       </div>
     );
   return (
@@ -1211,26 +1239,42 @@ function Docs() {
     if (!anchor.hash) main.current?.scrollTo({ top: 0 });
   }, [path]);
   const data = doc.data;
+  const [viewed, setViewed] = useState<File>();
+  const [ready, setReady] = useState<File>();
+  useEffect(() => setReady(undefined), [path]);
+  const deliver = (file: File, share: boolean) => {
+    setReady(undefined);
+    setSaving({ busy: true });
+    saveFile(file, share).then(
+      () => setSaving({}),
+      (error: unknown) => setSaving({ error: exportError(error) }),
+    );
+  };
   const exportDoc = (how: "download" | "pdf" | "share") => {
     if (data?.status !== "ok" && data?.status !== "pdf") return;
+    const share = how === "share" || touchKeyboard();
+    const prepared =
+      how === "pdf"
+        ? undefined
+        : data.status === "ok"
+          ? mdFile(data.path, data.text)
+          : viewed;
+    if (prepared) return deliver(prepared, share);
     setSaving({ busy: true });
     const file =
       how === "pdf"
         ? renderPdf(data.path)
-        : data.status === "ok"
-          ? Promise.resolve(mdFile(data.path, data.text))
-          : api
-              .action(FileAction, { path: data.path })
-              .then(({ data: bytes }) => pdfFile(data.path, bytes));
-    file
-      .then((file) => saveFile(file, how === "share" || touchKeyboard()))
-      .then(
-        () => setSaving({}),
-        (error: unknown) =>
-          setSaving({
-            error: error instanceof Error ? error.message : String(error),
-          }),
-      );
+        : api
+            .action(FileAction, { path: data.path })
+            .then(({ data: bytes }) => pdfFile(data.path, bytes));
+    file.then(
+      (file) => {
+        if (!share || !sharable(file)) return deliver(file, false);
+        setSaving({});
+        setReady(file);
+      },
+      (error: unknown) => setSaving({ error: exportError(error) }),
+    );
   };
   const viewport: Viewport = useViewport();
   const drawer = viewport === "phone";
@@ -1315,6 +1359,17 @@ function Docs() {
               </span>
             )}
             <div className="ml-auto flex shrink-0 items-center gap-1">
+              {ready && (
+                <Button
+                  className={coarse}
+                  onClick={() => deliver(ready, true)}
+                  size="xs"
+                  title={`Share ${ready.name}`}
+                >
+                  <Share2Icon />
+                  Ready, tap to share
+                </Button>
+              )}
               {edit ? (
                 <>
                   <Button
@@ -1513,7 +1568,7 @@ function Docs() {
                 />
               )}
               {data?.status === "pdf" && (
-                <PdfView path={data.path} phone={drawer} />
+                <PdfView onFile={setViewed} path={data.path} phone={drawer} />
               )}
               {data?.status === "ok" && !edit && (
                 <Body doc={data} known={known} onComment={setDraft} />
