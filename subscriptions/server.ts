@@ -7,8 +7,8 @@
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
-import { defineDoc, defineExtension, LiveDoc, ROOT_CONVERSATION_ID } from '@earendil-works/pi-durable'
-import type { CommitPublication, ConversationId, Harness } from '@earendil-works/pi-durable'
+import { defineExtension } from '@earendil-works/pi-durable'
+import type { CommitPublication, Harness } from '@earendil-works/pi-durable'
 import { credentialsPath, fetchClaude, notes, report, windows } from './anthropic.ts'
 import { fetchCodex } from './codex.ts'
 import { fetchOllama } from './ollama.ts'
@@ -37,14 +37,6 @@ const CLAUDE_POLL = 30 * MINUTE
 const CLAUDE_FRESH = 5 * MINUTE
 /** The longest wait after a 429 that names no `Retry-After`. */
 const BACKOFF_MAX = 60 * MINUTE
-/**
- * Claude's 5-hour window at this share compacts @ultimate once its turn ends, when its context is larger than `LARGE`:
- * right after a turn the cache is still warm, so the summary is cheap, and every later cold rebuild is smaller.
- */
-const SESSION = 0.8
-/** @ultimate's context, in tokens, above which the session rule compacts it. A compaction leaves it far below. */
-const LARGE = 120_000
-
 export const secrets = [
   {
     name: KEY,
@@ -105,34 +97,6 @@ async function visible(host: Host, state: Stored, found: { keyed: boolean; login
   const claude = state.claude !== undefined || (await access(credentialsPath(host.userHome)).then(() => true, () => false))
   return PLANS.filter((id) => (id === 'claude' ? claude : id === 'ollama' ? found.keyed : found.login))
 }
-
-/**
- * The subagents extension's standing-agents doc (`extensions/subagents/api.ts` `Standing`), by its kind: a user
- * extension cannot import the clone's contracts. Read only, so it is not exported in `docs`.
- */
-const Standing = defineDoc<Record<string, ConversationId>>({
-  kind: 'ultimate.standing-agents',
-  checkpointWhen: () => false,
-  version: 1,
-  scope: 'conversation',
-  history: 'latest',
-  fork: 'initial',
-  initial: () => ({}),
-})
-
-/**
- * The conversations extension's context measure (`extensions/conversations/api.ts` `ContextUsageDoc`), by its kind: the
- * number the status line's context meter shows. Read only, so it is not exported in `docs`.
- */
-const ContextUsage = defineDoc<{ tokens?: number; at: number }>({
-  kind: 'conversations.context',
-  checkpointWhen: () => false,
-  version: 1,
-  scope: 'conversation',
-  history: 'latest',
-  fork: 'initial',
-  initial: () => ({ at: 0 }),
-})
 
 let fetching: Promise<void> | undefined
 let askedAt = 0
@@ -279,52 +243,6 @@ function askClaude(host: Host, click: boolean): Promise<void> {
   return claudeFetching
 }
 
-let checking: Promise<void> | undefined
-/** A check asked for while one runs: it may have read @ultimate busy just before its turn ended, so check again. */
-let again = false
-/** This project's @ultimate as the last check found it: its run ending or its context changing checks again. */
-let ultimate: ConversationId | undefined
-
-/**
- * Compacts this project's @ultimate when Claude's newest 5-hour reading, from any source and process, is at `SESSION`
- * and @ultimate's context is above `LARGE`, once its turn has ended: mid-turn it waits, and the commit that clears its
- * run checks again. Only @ultimate: branches and every other agent keep running. It starts the same compaction as ⌘K
- * Compact, so lineage's hook wakes @ultimate once the summary is placed.
- */
-function check(host: Host): Promise<void> {
-  if (checking) {
-    again = true
-    return checking
-  }
-  checking = (async () => {
-    const harness = host.harness()
-    const id = (await harness.snapshot(Standing, ROOT_CONVERSATION_ID, context))?.ultimate
-    ultimate = id
-    if (id === undefined) return
-    const state = await read(host.userHome)
-    const window =
-      state.claude && settle(windows(state.claude.info), Date.now()).find((w) => w.key === 'five_hour')
-    if (!window || window.used < SESSION) return
-    if (((await harness.snapshot(ContextUsage, id, context))?.tokens ?? 0) <= LARGE) return
-    const live = await harness.snapshot(LiveDoc, id, context)
-    // A compaction already running is not doubled. One that failed since the last summary is not retried every minute:
-    // each attempt sends the whole context again, out of the same window; a compaction that succeeds clears it.
-    if (live?.run || live?.compactions?.length || live?.compactionFailure) return
-    await (await harness.conversation(id, context))?.compact(undefined, context)
-  })()
-    .catch(() => {
-      // A failed read or compaction leaves @ultimate as it was; the next reading, turn end or minute checks again.
-    })
-    .finally(() => {
-      checking = undefined
-      if (again) {
-        again = false
-        void check(host)
-      }
-    })
-  return checking
-}
-
 /**
  * Asks each shown plan whose reading is older than the poll, or every shown one when `due`; only plans the setting shows
  * are ever polled.
@@ -459,22 +377,12 @@ export default function subscriptions(host: Host) {
     const observation = host.harness().observeCommits({
       advance(publication: CommitPublication) {
         for (const written of publication.changes) {
-          // @ultimate's turn ended, or its context measure changed.
-          if (
-            written.type === 'document' &&
-            written.kind === 'change' &&
-            ultimate !== undefined &&
-            written.conversationId === ultimate &&
-            ((written.record.kind === LiveDoc.definition.kind && !written.value.run) ||
-              written.record.kind === ContextUsage.definition.kind)
-          )
-            void check(host)
           if (written.type !== 'entry' || written.value.kind !== 'pi.assistant') continue
           const found = report(written.value)
           if (!found) continue
           void record(host, (state) => {
             if (!state.claude || found.at > state.claude.at) state.claude = found
-          }).then(() => check(host))
+          })
         }
       },
       end() {},
@@ -493,18 +401,14 @@ export default function subscriptions(host: Host) {
       })
     tick()
     timer = setInterval(tick, POLL)
-    // Checks every minute whether Claude's reading is old enough to ask again (while its row is shown), and whether it,
-    // or one another project's process stored, calls for compacting @ultimate: that rule reads Claude's readings
-    // whether the row is shown or not, and the responses keep bringing them either way.
+    // Checks every minute whether Claude's reading is old enough to ask again, while its row is shown.
     const claudeShown = async () =>
       (await visible(host, await read(host.userHome), await credentials(host))).includes('claude')
     const minute = () =>
-      void claudeShown()
-        .then(
-          (shown) => (shown ? askClaude(host, false) : undefined),
-          () => undefined,
-        )
-        .then(() => check(host))
+      void claudeShown().then(
+        (shown) => (shown ? askClaude(host, false) : undefined),
+        () => undefined,
+      )
     minute()
     claudeTimer = setInterval(minute, MINUTE)
   })
