@@ -17,6 +17,7 @@ import {
   MessageSquarePlusIcon,
   RefreshCwIcon,
   SendIcon,
+  Share2Icon,
   XIcon,
 } from "lucide-react";
 import {
@@ -604,17 +605,19 @@ function pdfFile(path: string, data: string) {
   });
 }
 
-async function saveDoc(path: string, text: string) {
-  await saveFile(
-    new File([text], path.split("/").pop() ?? "doc.md", {
-      type: "text/markdown",
-    }),
-  );
-}
+const mdFile = (path: string, text: string) =>
+  new File([text], path.split("/").pop() ?? "doc.md", {
+    type: "text/markdown",
+  });
 
-async function saveFile(file: File) {
+const canShareFiles = () =>
+  navigator.canShare?.({
+    files: [new File([], "doc.pdf", { type: "application/pdf" })],
+  }) ?? false;
+
+async function saveFile(file: File, share: boolean) {
   const name = file.name;
-  if (navigator.canShare?.({ files: [file] })) {
+  if (share && navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file] });
     } catch (error) {
@@ -628,10 +631,10 @@ async function saveFile(file: File) {
   link.href = url;
   link.download = name;
   link.click();
-  URL.revokeObjectURL(url);
+  requestAnimationFrame(() => URL.revokeObjectURL(url));
 }
 
-async function downloadAsPdf(path: string) {
+async function renderPdf(path: string) {
   const source = document.querySelector("[data-docs-markdown]");
   if (!source) throw new Error("Open the doc first");
   const copy = source.cloneNode(true) as HTMLElement;
@@ -646,11 +649,12 @@ async function downloadAsPdf(path: string) {
   const { data } = await api.action(PdfAction, { path, html: copy.innerHTML });
   const name = (path.split("/").pop() ?? "doc").replace(/\.md$/i, "");
   const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
-  await saveFile(new File([bytes], `${name}.pdf`, { type: "application/pdf" }));
+  return new File([bytes], `${name}.pdf`, { type: "application/pdf" });
 }
 
 const coarse =
   "pointer-coarse:h-11 pointer-coarse:px-3 pointer-coarse:text-[13px]";
+const iconCoarse = "pointer-coarse:size-11";
 
 type Pending = { comments: DocComment[]; note: string };
 const empty: Pending = { comments: [], note: "" };
@@ -689,7 +693,7 @@ function PdfView({ path, phone }: { path: string; phone: boolean }) {
         </Button>
         <Button
           className="h-11 w-full text-[14px]"
-          onClick={() => void saveFile(file)}
+          onClick={() => void saveFile(file, touchKeyboard())}
           variant="outline"
         >
           <DownloadIcon />
@@ -1040,13 +1044,12 @@ function Versions({
       <PopoverTrigger asChild>
         <Button
           aria-label="Earlier versions"
-          className={coarse}
-          size="xs"
+          className={iconCoarse}
+          size="icon-xs"
           title="Earlier versions of this report"
           variant="ghost"
         >
           <HistoryIcon />
-          <span className="max-md:sr-only">History</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64 p-1">
@@ -1208,6 +1211,27 @@ function Docs() {
     if (!anchor.hash) main.current?.scrollTo({ top: 0 });
   }, [path]);
   const data = doc.data;
+  const exportDoc = (how: "download" | "pdf" | "share") => {
+    if (data?.status !== "ok" && data?.status !== "pdf") return;
+    setSaving({ busy: true });
+    const file =
+      how === "pdf"
+        ? renderPdf(data.path)
+        : data.status === "ok"
+          ? Promise.resolve(mdFile(data.path, data.text))
+          : api
+              .action(FileAction, { path: data.path })
+              .then(({ data: bytes }) => pdfFile(data.path, bytes));
+    file
+      .then((file) => saveFile(file, how === "share" || touchKeyboard()))
+      .then(
+        () => setSaving({}),
+        (error: unknown) =>
+          setSaving({
+            error: error instanceof Error ? error.message : String(error),
+          }),
+      );
+  };
   const viewport: Viewport = useViewport();
   const drawer = viewport === "phone";
   const [filesOpen, setFilesOpen] = useState(false);
@@ -1276,7 +1300,7 @@ function Docs() {
               </span>
             )}
             {data?.status === "ok" && (kept || expires !== undefined) && (
-              <span className="-ml-2 shrink-0">
+              <span className="-ml-2 shrink-0 max-md:hidden">
                 {kept
                   ? "· kept"
                   : `· deleted in ${Math.max(0, Math.ceil((expires! - now) / DAY))}d`}
@@ -1331,15 +1355,15 @@ function Docs() {
                     )}
                     {!report && data.dirty && (
                       <Button
-                        className={coarse}
+                        aria-label="Commit"
+                        className={iconCoarse}
                         disabled={saving.busy}
                         onClick={() => void commit(data.path)}
-                        size="xs"
+                        size="icon-xs"
                         title="Commit this file alone on the checked-out branch"
                         variant="ghost"
                       >
                         <GitCommitHorizontalIcon />
-                        <span className="max-md:sr-only">Commit</span>
                       </Button>
                     )}
                   </>
@@ -1348,77 +1372,73 @@ function Docs() {
               {(report?.status === "ok" || report?.status === "pdf") &&
                 !kept && (
                   <Button
-                    className={coarse}
+                    aria-label="Keep"
+                    className={iconCoarse}
                     disabled={keeping.busy}
                     onClick={() => void keep(report.path)}
-                    size="xs"
-                    title="Move to archive/: the daily sweep never deletes it"
+                    size="icon-xs"
+                    title="Keep: move to archive/, the daily sweep never deletes it"
                     variant="ghost"
                   >
                     <ArchiveIcon />
-                    <span className="max-md:sr-only">Keep</span>
                   </Button>
                 )}
               <Button
-                className={coarse}
+                aria-label="Comment on doc"
+                className={iconCoarse}
                 disabled={data?.status !== "ok"}
                 onClick={() => setDraft({})}
-                size="xs"
+                size="icon-xs"
+                title="Comment on the whole doc"
                 variant="ghost"
               >
                 <MessageSquarePlusIcon />
-                <span className="max-md:sr-only">Comment on doc</span>
               </Button>
               <Button
-                className={coarse}
-                disabled={data?.status !== "ok" && data?.status !== "pdf"}
-                onClick={() => {
-                  if (data?.status === "ok") void saveDoc(data.path, data.text);
-                  if (data?.status === "pdf")
-                    void api
-                      .action(FileAction, { path: data.path })
-                      .then(({ data: bytes }) =>
-                        saveFile(pdfFile(data.path, bytes)),
-                      )
-                      .catch((error: unknown) =>
-                        setSaving({
-                          error:
-                            error instanceof Error
-                              ? error.message
-                              : String(error),
-                        }),
-                      );
-                }}
-                size="xs"
-                title="Save the file, or share it from a phone"
+                aria-label="Download"
+                className={iconCoarse}
+                disabled={
+                  saving.busy ||
+                  (data?.status !== "ok" && data?.status !== "pdf")
+                }
+                onClick={() => exportDoc("download")}
+                size="icon-xs"
+                title={
+                  touchKeyboard()
+                    ? "Save or share the file"
+                    : "Download the file"
+                }
                 variant="ghost"
               >
                 <DownloadIcon />
-                <span className="max-md:sr-only">Download</span>
               </Button>
               {data?.status === "ok" && !edit && (
                 <Button
-                  className={coarse}
+                  aria-label="Download as PDF"
+                  className={iconCoarse}
                   disabled={saving.busy}
-                  onClick={() => {
-                    setSaving({ busy: true });
-                    downloadAsPdf(data.path).then(
-                      () => setSaving({}),
-                      (error: unknown) =>
-                        setSaving({
-                          error:
-                            error instanceof Error
-                              ? error.message
-                              : String(error),
-                        }),
-                    );
-                  }}
-                  size="xs"
-                  title="Make a PDF of the rendered doc; nothing is saved in the repo"
+                  onClick={() => exportDoc("pdf")}
+                  size="icon-xs"
+                  title="Download as PDF; nothing is saved in the repo"
                   variant="ghost"
                 >
                   <FileDownIcon />
-                  <span className="max-md:sr-only">PDF</span>
+                </Button>
+              )}
+              {!touchKeyboard() && canShareFiles() && (
+                <Button
+                  aria-label="Share"
+                  className={iconCoarse}
+                  disabled={
+                    saving.busy ||
+                    (data?.status !== "ok" && data?.status !== "pdf")
+                  }
+                  onClick={() => exportDoc("share")}
+                  size="icon-xs"
+                  title="Share the file, to AirDrop, Messages or another app"
+                  variant="ghost"
+                >
+                  <Share2Icon />
                 </Button>
               )}
               <Button
