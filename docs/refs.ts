@@ -107,3 +107,9 @@ export const FileAction = actionRef<{ path: string }, { data: string }>(
   "docs",
   "file",
 );
+
+/** User only: `{ path, html }`, the rendered HTML of a doc → a PDF of it made on demand by headless Chromium, base64; nothing is stored. */
+export const PdfAction = actionRef<
+  { path: string; html: string },
+  { data: string }
+>("docs", "pdf");

@@ -10,6 +10,7 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   ExternalLinkIcon,
+  FileDownIcon,
   FileTextIcon,
   ListIcon,
   MessageSquareIcon,
@@ -72,6 +73,7 @@ import {
   CommitAction,
   FileAction,
   HistoryAction,
+  PdfAction,
   KeepAction,
   ListAction,
   ReadAction,
@@ -561,13 +563,15 @@ function Body({
       ref={ref}
     >
       <Frontmatter data={doc.frontmatter} />
-      <MessageResponse
-        className="text-[14px] leading-relaxed"
-        mode="static"
-        parseIncompleteMarkdown={false}
-      >
-        {linkify(absoluteLinks(doc.body, doc.path), doc.path, known)}
-      </MessageResponse>
+      <div data-docs-markdown>
+        <MessageResponse
+          className="text-[14px] leading-relaxed"
+          mode="static"
+          parseIncompleteMarkdown={false}
+        >
+          {linkify(absoluteLinks(doc.body, doc.path), doc.path, known)}
+        </MessageResponse>
+      </div>
       {pick && (
         <Button
           className={cn(
@@ -625,6 +629,24 @@ async function saveFile(file: File) {
   link.download = name;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+async function downloadAsPdf(path: string) {
+  const source = document.querySelector("[data-docs-markdown]");
+  if (!source) throw new Error("Open the doc first");
+  const copy = source.cloneNode(true) as HTMLElement;
+  copy
+    .querySelectorAll(
+      "button, svg, script, style, [data-streamdown=code-block-header]",
+    )
+    .forEach((node) => node.remove());
+  copy.querySelectorAll("a").forEach((link) => {
+    link.setAttribute("href", link.href);
+  });
+  const { data } = await api.action(PdfAction, { path, html: copy.innerHTML });
+  const name = (path.split("/").pop() ?? "doc").replace(/\.md$/i, "");
+  const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+  await saveFile(new File([bytes], `${name}.pdf`, { type: "application/pdf" }));
 }
 
 const coarse =
@@ -1204,7 +1226,9 @@ function Docs() {
     />
   );
   const report = path !== null && isReport(path) ? data : undefined;
-  const kept = report?.status === "ok" && report.path.startsWith(ARCHIVE);
+  const kept =
+    (report?.status === "ok" || report?.status === "pdf") &&
+    report.path.startsWith(ARCHIVE);
   const expires = reportList.find((item) => item.path === path)?.expires;
   return (
     <>
@@ -1321,19 +1345,20 @@ function Docs() {
                   </>
                 )
               )}
-              {report?.status === "ok" && !kept && (
-                <Button
-                  className={coarse}
-                  disabled={keeping.busy}
-                  onClick={() => void keep(report.path)}
-                  size="xs"
-                  title="Move to archive/: the daily sweep never deletes it"
-                  variant="ghost"
-                >
-                  <ArchiveIcon />
-                  <span className="max-md:sr-only">Keep</span>
-                </Button>
-              )}
+              {(report?.status === "ok" || report?.status === "pdf") &&
+                !kept && (
+                  <Button
+                    className={coarse}
+                    disabled={keeping.busy}
+                    onClick={() => void keep(report.path)}
+                    size="xs"
+                    title="Move to archive/: the daily sweep never deletes it"
+                    variant="ghost"
+                  >
+                    <ArchiveIcon />
+                    <span className="max-md:sr-only">Keep</span>
+                  </Button>
+                )}
               <Button
                 className={coarse}
                 disabled={data?.status !== "ok"}
@@ -1354,6 +1379,14 @@ function Docs() {
                       .action(FileAction, { path: data.path })
                       .then(({ data: bytes }) =>
                         saveFile(pdfFile(data.path, bytes)),
+                      )
+                      .catch((error: unknown) =>
+                        setSaving({
+                          error:
+                            error instanceof Error
+                              ? error.message
+                              : String(error),
+                        }),
                       );
                 }}
                 size="xs"
@@ -1363,6 +1396,31 @@ function Docs() {
                 <DownloadIcon />
                 <span className="max-md:sr-only">Download</span>
               </Button>
+              {data?.status === "ok" && !edit && (
+                <Button
+                  className={coarse}
+                  disabled={saving.busy}
+                  onClick={() => {
+                    setSaving({ busy: true });
+                    downloadAsPdf(data.path).then(
+                      () => setSaving({}),
+                      (error: unknown) =>
+                        setSaving({
+                          error:
+                            error instanceof Error
+                              ? error.message
+                              : String(error),
+                        }),
+                    );
+                  }}
+                  size="xs"
+                  title="Make a PDF of the rendered doc; nothing is saved in the repo"
+                  variant="ghost"
+                >
+                  <FileDownIcon />
+                  <span className="max-md:sr-only">PDF</span>
+                </Button>
+              )}
               <Button
                 aria-label="Reload"
                 className="pointer-coarse:size-11"

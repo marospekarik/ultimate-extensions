@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
 import { hashOf, parsed } from "./doc.ts";
+import { renderPdf } from "./pdf.ts";
 import {
   DAY,
   isPdf,
@@ -271,7 +272,7 @@ const pathOf = (args: unknown) => {
   return path;
 };
 
-export const userActions = ["send", "keep", "write", "commit"];
+export const userActions = ["send", "keep", "write", "commit", "pdf"];
 
 export const actions = {
   list: (_args: unknown, { host }: Ctx) => list(host),
@@ -279,6 +280,12 @@ export const actions = {
   read: (args: unknown, { host }: Ctx) => {
     const path = pathOf(args);
     return path.startsWith(REPORTS) ? readReport(host, path) : read(host, path);
+  },
+  pdf: async (args: unknown) => {
+    const path = pathOf(args);
+    const { html } = args as { html?: unknown };
+    const name = path.split("/").pop() ?? "doc";
+    return { data: (await renderPdf(name, html)).toString("base64") };
   },
   file: (args: unknown, { host }: Ctx) => pdfBytes(host, pathOf(args)),
   keep: (args: unknown, { host }: Ctx) => keep(host, pathOf(args)),
