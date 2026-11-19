@@ -5,11 +5,22 @@ import { defineExtension, section } from "@earendil-works/pi-durable";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
-import { parsed } from "./doc.ts";
+import { hashOf, parsed } from "./doc.ts";
 import { DAY, limits, MAX_BYTES, REPORTS } from "./limits.ts";
 import { DocCommentsEntry } from "./refs.ts";
 import type { Doc, DocComment, DocComments } from "./refs.ts";
-import { keep, readReport, reportFile, reports, sweep } from "./reports.ts";
+import {
+  checkSave,
+  history,
+  keep,
+  readReport,
+  reportFile,
+  reports,
+  sweep,
+  version,
+  writeAtomically,
+  writeReport,
+} from "./reports.ts";
 
 type Host = {
   projectRoot: string;
@@ -92,7 +103,52 @@ async function read(
     return { status: "missing", path };
   if (stat.size > MAX_BYTES)
     return { status: "tooLarge", path, size: stat.size };
-  return parsed(path, await readFile(file, "utf8"), stat.size, stat.mtimeMs);
+  const doc = parsed(path, await readFile(file, "utf8"), stat.size, stat.mtimeMs);
+  const { stdout } = await runGit(host.projectRoot, [
+    "status",
+    "--porcelain",
+    "--",
+    path,
+  ]);
+  return doc.status === "ok" && stdout.trim() ? { ...doc, dirty: true } : doc;
+}
+
+async function repoFile(host: Pick<Host, "projectRoot">, path: string) {
+  if (!(await list(host)).includes(path))
+    throw new Error(`Not a doc the viewer shows: ${path}`);
+  const root = await realpath(host.projectRoot);
+  const file = join(root, path);
+  const stat = await lstat(file).catch(missing);
+  if (!stat?.isFile() || (await realpath(file)) !== file || !file.startsWith(root + sep))
+    throw new Error(`No doc ${path}`);
+  return { file, stat };
+}
+
+async function writeDoc(
+  host: Pick<Host, "projectRoot">,
+  path: string,
+  text: unknown,
+  base: unknown,
+) {
+  const { file, stat } = await repoFile(host, path);
+  const next = checkSave(text, base, await readFile(file, "utf8"));
+  await writeAtomically(file, next, stat.mode);
+  return { hash: hashOf(next) };
+}
+
+async function commitDoc(
+  host: Pick<Host, "projectRoot">,
+  path: string,
+  message: unknown,
+) {
+  await repoFile(host, path);
+  const subject =
+    typeof message === "string" && message.trim()
+      ? message.trim().slice(0, 200)
+      : `Docs: edit ${path}`;
+  await runGit(host.projectRoot, ["commit", "-m", subject, "--only", "--", path]);
+  const { stdout } = await runGit(host.projectRoot, ["rev-parse", "--short", "HEAD"]);
+  return { commit: stdout.trim() };
 }
 
 const clip = (text: unknown, max: number, what: string) => {
@@ -173,7 +229,7 @@ const pathOf = (args: unknown) => {
   return path;
 };
 
-export const userActions = ["send", "keep"];
+export const userActions = ["send", "keep", "write", "commit"];
 
 export const actions = {
   list: (_args: unknown, { host }: Ctx) => list(host),
@@ -183,6 +239,21 @@ export const actions = {
     return path.startsWith(REPORTS) ? readReport(host, path) : read(host, path);
   },
   keep: (args: unknown, { host }: Ctx) => keep(host, pathOf(args)),
+  write: (args: unknown, { host }: Ctx) => {
+    const { text, base } = args as { text?: unknown; base?: unknown };
+    const path = pathOf(args);
+    return path.startsWith(REPORTS)
+      ? writeReport(host, path, text, base)
+      : writeDoc(host, path, text, base);
+  },
+  history: (args: unknown, { host }: Ctx) => history(host, pathOf(args)),
+  version: (args: unknown, { host }: Ctx) =>
+    version(host, pathOf(args), (args as { id?: unknown }).id),
+  commit: (args: unknown, { host }: Ctx) => {
+    const path = pathOf(args);
+    if (path.startsWith(REPORTS)) throw new Error("Reports are not in git");
+    return commitDoc(host, path, (args as { message?: unknown }).message);
+  },
   sweep: (_args: unknown, { host }: Ctx) => sweep(host, Date.now()),
   send: async (args: unknown, { host }: Ctx) => {
     const { conversation: id, ...review } = checkComments(args);

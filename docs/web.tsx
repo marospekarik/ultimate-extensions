@@ -2,6 +2,10 @@ import type { ConversationId, EntryRecord } from "@earendil-works/pi-durable";
 import {
   ArchiveIcon,
   ArrowLeftIcon,
+  CheckIcon,
+  GitCommitHorizontalIcon,
+  HistoryIcon,
+  PencilIcon,
   ArrowRightIcon,
   ChevronDownIcon,
   DownloadIcon,
@@ -59,14 +63,20 @@ import {
   useViewport,
 } from "@/sdk";
 import type { Viewport } from "@/sdk";
+import { Editor } from "./editor.tsx";
+import { prefixOf } from "./blocks.ts";
 import { docPath, findHeading, headingIds, linkify } from "./links.ts";
 import { ARCHIVE, DAY, isReport, limits, shownPath } from "./limits.ts";
 import {
+  CommitAction,
+  HistoryAction,
   KeepAction,
   ListAction,
   ReadAction,
   ReportsAction,
   SendAction,
+  VersionAction,
+  WriteAction,
 } from "./refs.ts";
 import type { Doc, DocComment, DocComments, Report } from "./refs.ts";
 
@@ -921,6 +931,61 @@ function Comments({
   );
 }
 
+function Versions({
+  path,
+  onPick,
+}: {
+  path: string;
+  onPick: (text: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const versions = useAction(HistoryAction, { path }, { enabled: open });
+  const now = useNow(60_000);
+  return (
+    <Popover onOpenChange={setOpen} open={open}>
+      <PopoverTrigger asChild>
+        <Button
+          aria-label="Earlier versions"
+          className={coarse}
+          size="xs"
+          title="Earlier versions of this report"
+          variant="ghost"
+        >
+          <HistoryIcon />
+          <span className="max-md:sr-only">History</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 p-1">
+        {(versions.data ?? []).length === 0 && (
+          <p className="text-muted-foreground px-2 py-2 font-mono text-[11.5px]">
+            No earlier versions yet. Each save keeps the one it replaces.
+          </p>
+        )}
+        {(versions.data ?? []).map((item) => (
+          <button
+            className="hover:bg-accent/60 flex w-full items-baseline justify-between gap-2 rounded px-2 py-1.5 text-left font-mono text-[12px] pointer-coarse:py-3"
+            key={item.id}
+            onClick={async () => {
+              const { text } = await api.action(VersionAction, {
+                path,
+                id: item.id,
+              });
+              setOpen(false);
+              onPick(text);
+            }}
+            type="button"
+          >
+            <span>{formatAgo(item.at, now, { ago: true })}</span>
+            <span className="text-muted-foreground/70">
+              {formatBytes(item.size)}
+            </span>
+          </button>
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function Docs() {
   const list = useAction(ListAction);
   const reports = useAction(ReportsAction);
@@ -973,6 +1038,65 @@ function Docs() {
       setKeeping({});
     } catch (error) {
       setKeeping({
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  const [editing, setEditing] = useState<{
+    path: string;
+    draft: string;
+    base: string;
+    prefix: string;
+    note?: string;
+  } | null>(null);
+  const [saving, setSaving] = useState<{ busy?: boolean; error?: string }>({});
+  const edit = editing?.path === path ? editing : null;
+  const startEditing = (text?: string) => {
+    if (!path || data?.status !== "ok") return;
+    const prefix = prefixOf(data.text, data.body);
+    const draft =
+      text === undefined
+        ? data.body
+        : text.startsWith(prefix)
+          ? text.slice(prefix.length)
+          : text;
+    if (prefix + data.body !== data.text) {
+      setSaving({ error: "This doc's frontmatter can't be edited here." });
+      return;
+    }
+    setSaving({});
+    setEditing({ path, draft, base: data.hash, prefix, note: text === undefined ? undefined : "restored" });
+  };
+  const stopEditing = () => {
+    setEditing(null);
+    setSaving({});
+  };
+  const save = async () => {
+    if (!edit || data?.status !== "ok") return;
+    setSaving({ busy: true });
+    try {
+      await api.action(WriteAction, {
+        path: data.path,
+        text: edit.prefix + edit.draft,
+        base: edit.base,
+      });
+      await doc.refetch();
+      await reports.refetch();
+      stopEditing();
+    } catch (error) {
+      setSaving({
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  const commit = async (target: string) => {
+    setSaving({ busy: true });
+    try {
+      await api.action(CommitAction, { path: target });
+      await doc.refetch();
+      setSaving({});
+    } catch (error) {
+      setSaving({
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -1054,10 +1178,64 @@ function Docs() {
                   : `· deleted in ${Math.max(0, Math.ceil((expires! - now) / DAY))}d`}
               </span>
             )}
-            {keeping.error && (
-              <span className="text-error truncate">{keeping.error}</span>
+            {(keeping.error ?? saving.error) && (
+              <span className="text-error truncate" title={keeping.error ?? saving.error}>
+                {keeping.error ?? saving.error}
+              </span>
             )}
             <div className="ml-auto flex shrink-0 items-center gap-1">
+              {edit ? (
+                <>
+                  <Button
+                    className={coarse}
+                    disabled={saving.busy}
+                    onClick={stopEditing}
+                    size="xs"
+                    variant="ghost"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    className={coarse}
+                    disabled={saving.busy}
+                    onClick={() => void save()}
+                    size="xs"
+                  >
+                    <CheckIcon />
+                    {saving.busy ? "Saving…" : "Save"}
+                  </Button>
+                </>
+              ) : (
+                data?.status === "ok" && (
+                  <>
+                    {!kept && (
+                      <Button
+                        className={coarse}
+                        onClick={() => startEditing()}
+                        size="xs"
+                        variant="ghost"
+                      >
+                        <PencilIcon />
+                        <span className="max-md:sr-only">Edit</span>
+                      </Button>
+                    )}
+                    {report && <Versions onPick={startEditing} path={data.path} />}
+                    {!report && data.dirty && (
+                      <Button
+                        className={coarse}
+                        disabled={saving.busy}
+                        onClick={() => void commit(data.path)}
+                        size="xs"
+                        title="Commit this file alone on the checked-out branch"
+                        variant="ghost"
+                      >
+                        <GitCommitHorizontalIcon />
+                        <span className="max-md:sr-only">Commit</span>
+                      </Button>
+                    )}
+                  </>
+                )
+              )}
               {report?.status === "ok" && !kept && (
                 <Button
                   className={coarse}
@@ -1148,7 +1326,19 @@ function Docs() {
                   the viewer shows.
                 </p>
               )}
-              {data?.status === "ok" && (
+              {data?.status === "ok" && edit && (
+                <Editor
+                  key={edit.note ?? ""}
+                  onSave={() => void save()}
+                  onText={(draft) =>
+                    setEditing((previous) =>
+                      previous ? { ...previous, draft } : previous,
+                    )
+                  }
+                  text={edit.draft}
+                />
+              )}
+              {data?.status === "ok" && !edit && (
                 <Body doc={data} known={known} onComment={setDraft} />
               )}
             </div>
@@ -1226,7 +1416,7 @@ export default defineWebExtension({
       title: "Docs",
       icon: FileTextIcon,
       description:
-        "The repo's Markdown, read-only; comment and send to an agent",
+        "The repo's Markdown and your reports: read, edit, comment and send to an agent",
       order: 50,
       component: Docs,
     },

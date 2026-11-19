@@ -259,46 +259,71 @@ function Card({ plan, peak, now }: { plan: Plan; peak: Peak; now: number }) {
   )
 }
 
-/** The collapsed rail's look of a plan: its initial over a thin bar of the binding window. */
-function Chip({ plan }: { plan: Plan }) {
-  const most = binding(plan)
+const reveal =
+  'opacity-0 transition-opacity duration-100 group-hover/rail:opacity-100 group-hover/rail:delay-[350ms] group-has-[:focus-visible]/rail:opacity-100 group-has-[:focus-visible]/rail:delay-[350ms]'
+const fadeOut =
+  'transition-opacity duration-100 group-hover/rail:opacity-0 group-hover/rail:delay-200 group-has-[:focus-visible]/rail:opacity-0 group-has-[:focus-visible]/rail:delay-200'
+
+function Full({ plan, peak }: { plan: Plan; peak: Peak }) {
   return (
-    <span className="flex w-8 shrink-0 flex-col items-center gap-1 group-hover/rail:hidden group-has-[:focus-visible]/rail:hidden">
-      <span className="font-mono text-[11px] text-muted-foreground">{plan.name.slice(0, 2)}</span>
-      <Bar className={cn('w-6', most && tone(most.used))} used={most?.used ?? 0} />
-    </span>
+    <>
+      <span className="shrink-0 text-[12px] whitespace-nowrap text-foreground/85">{plan.name.split(' ')[0]}</span>
+      {plan.id === 'ollama' && <PeakMark peak={peak} />}
+      <span className="ml-auto flex items-center gap-2 whitespace-nowrap">
+        {plan.setup ? (
+          <span className="font-mono text-[10px] text-muted-foreground/50">{plan.setup}</span>
+        ) : (
+          <Reading plan={plan} />
+        )}
+      </span>
+    </>
   )
 }
 
-function BarRow({ plan, peak, now, where }: { plan: Plan; peak: Peak; now: number; where: 'rail' | 'phone' }) {
+/**
+ * The rail's row keeps one fixed height. The compact look (a plan's initial over a thin bar) fades out as the rail starts
+ * to widen; the full row is laid out at its expanded width all along, so nothing wraps, and fades in once the width
+ * transition and its hover delay are done. Collapsing fades the full row out at once.
+ */
+function RailRow({ plan, peak, now }: { plan: Plan; peak: Peak; now: number }) {
+  const most = binding(plan)
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
-          className="flex min-w-0 cursor-pointer items-center gap-2.5 rounded-md py-1 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+          className="relative h-9 w-full shrink-0 cursor-pointer overflow-hidden rounded-md text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
           data-plan={plan.id}
           type="button"
         >
-          {where === 'rail' && <Chip plan={plan} />}
-          <span
-            className={cn(
-              'min-w-0 flex-1 items-center gap-2 px-2',
-              where === 'rail' ? 'hidden group-hover/rail:flex group-has-[:focus-visible]/rail:flex' : 'flex',
-            )}
-          >
-            <span className="shrink-0 text-[12px] whitespace-nowrap text-foreground/85">{plan.name.split(' ')[0]}</span>
-            {plan.id === 'ollama' && <PeakMark peak={peak} />}
-            <span className="ml-auto flex items-center gap-2">
-              {plan.setup ? (
-                <span className="font-mono text-[10px] whitespace-nowrap text-muted-foreground/50">{plan.setup}</span>
-              ) : (
-                <Reading plan={plan} />
-              )}
-            </span>
+          <span className={cn('absolute inset-y-0 left-0 flex w-8 flex-col items-center justify-center gap-1', fadeOut)}>
+            <span className="font-mono text-[11px] text-muted-foreground">{plan.name.slice(0, 2)}</span>
+            <Bar className={cn('w-6', most && tone(most.used))} used={most?.used ?? 0} />
+          </span>
+          <span className={cn('absolute inset-y-0 left-0 flex w-60 items-center gap-2 px-2', reveal)}>
+            <Full peak={peak} plan={plan} />
           </span>
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 max-w-[calc(100vw-1rem)] p-3" side={where === 'rail' ? 'right' : 'top'}>
+      <PopoverContent align="start" className="w-80 max-w-[calc(100vw-1rem)] p-3" side="right">
+        <Card now={now} peak={peak} plan={plan} />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function PhoneRow({ plan, peak, now }: { plan: Plan; peak: Peak; now: number }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-left outline-none hover:bg-accent/50"
+          data-plan={plan.id}
+          type="button"
+        >
+          <Full peak={peak} plan={plan} />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80 max-w-[calc(100vw-1rem)] p-3" side="top">
         <Card now={now} peak={peak} plan={plan} />
       </PopoverContent>
     </Popover>
@@ -318,7 +343,11 @@ function Plans({ where }: { where: 'rail' | 'phone' }) {
   return (
     <div className="mt-1 flex flex-col gap-px border-t border-border/60 pt-1" data-subscriptions={where}>
       {data.plans.map((plan) => (
-        <BarRow key={plan.id} now={now} peak={data.peak} plan={plan} where={where} />
+        where === 'rail' ? (
+          <RailRow key={plan.id} now={now} peak={data.peak} plan={plan} />
+        ) : (
+          <PhoneRow key={plan.id} now={now} peak={data.peak} plan={plan} />
+        )
       ))}
     </div>
   )
