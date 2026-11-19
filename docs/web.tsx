@@ -1257,7 +1257,7 @@ function Docs() {
                 variant="ghost"
               >
                 <MessageSquarePlusIcon />
-                Comment on doc
+                <span className="max-md:sr-only">Comment on doc</span>
               </Button>
               <Button
                 className={coarse}

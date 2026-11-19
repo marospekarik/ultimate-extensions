@@ -17,8 +17,8 @@ const kindClass: Record<Kind, string> = {
 
 const spanClass = {
   mark: "text-muted-foreground/60",
-  bold: "text-foreground",
-  italic: "text-foreground/90",
+  bold: "text-foreground font-bold",
+  italic: "text-foreground/90 italic",
   code: "bg-muted rounded-sm",
 } as const;
 

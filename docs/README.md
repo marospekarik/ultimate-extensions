@@ -1,4 +1,4 @@
-A read-only Docs app for any repository: every git-tracked Markdown file rendered with Ultimate's own Markdown renderer, plus the project's reports, with comments you send to @ultimate or a branch.
+A Docs app for any repository, with editing: every git-tracked Markdown file rendered with Ultimate's own Markdown renderer, plus the project's reports, with comments you send to @ultimate or a branch.
 
 ## What it does
 
@@ -10,6 +10,13 @@ A read-only Docs app for any repository: every git-tracked Markdown file rendere
 - **Agents.** A prompt section (`docs_links`, `server.ts`) tells every agent to link what its reports and docs mention, with the same slug rule.
 - **Download.** The doc's bar has a **Download** button that saves the file as stored, frontmatter included, under its own name. On a phone that can share files it opens the share sheet instead.
 - **Comments.** Select text and click **Comment** (on touch, **Comment on selection** at the foot of the screen), or **Comment on doc** for the doc as a whole. Pending comments are kept per doc in durable UI state until sent. **Send (N)** posts one `docs.comments` input to the conversation the **to** picker names (default @ultimate). It steers a busy recipient like a typed message. The recipient sees a card on the user's side; the model reads each comment with its heading and quote, and is told to read the doc (for a report, at its absolute path).
+
+## Editing
+
+- **Edit** in the doc's bar (not for kept reports) opens the doc block by block: tap a paragraph, heading, list, quote or code block and it becomes a text field in the same type size, with Markdown marks (`#`, `**`, `-`) dimmed and bold, italic and code styled live as you type. Typing `###` and a space gives a heading-sized line; Enter continues a list (`1.` counts up) and an empty item ends it; Enter elsewhere splits the block; Backspace in an empty block removes it; Arrow Up/Down at the edge moves to the neighbouring block; Ctrl/⌘+B and +I wrap the selection; Ctrl/⌘+Enter saves; Esc leaves the block. **Save** writes the file, **Cancel** drops the draft. YAML frontmatter is kept as it was and is not editable here.
+- **Safe saves.** A save sends the SHA-256 of the text it opened (`hash`); the server refuses a mismatch ("changed since you opened it"), so a draft never overwrites an agent's newer edit. It writes a temp file in the same folder and renames it over the original.
+- **Reports** keep the last 20 versions in `.history/<report>/` in the reports folder (dot folder: never listed, never a doc). Each save stores the text it replaces. **History** lists them newest first; picking one opens it as a draft to Save, so a restore is itself undoable. Deleting a report in the sweep removes its history.
+- **Repo docs** save to the working tree and stay uncommitted. A doc with uncommitted changes shows **Commit**, which commits that file alone (`git commit --only -- <path>`, message `Docs: edit <path>`) on the checked-out branch; other staged or dirty files are left out.
 
 ## Reports
 
@@ -27,6 +34,7 @@ Long one-off output (a setup manual, an investigation, a runbook for one machine
 - `list` → every tracked `*.md` path, sorted.
 - `reports` → `{ folder, reports }`: the folder (`~/.ultimate/reports/<name>-<hash>/`) and its reports, `{ path, size, modified, archived, expires? }`, newest first, then `archive/`'s.
 - `read { path }` → `{ status: 'ok', path, frontmatter, body, size, modified }`, or `missing` (not tracked, gone, or a report that does not exist) / `tooLarge` (over 1 MB). The surface shows `Not found: <path>` for a missing doc; it never falls back to another doc. `path` is one of `list`'s, or a report's `.reports/<name>.md` / `.reports/archive/<name>.md`.
+- `write { path, text, base }`, **user only** → `{ hash }`. `history { path }` → a report's versions; `version { path, id }` → one's text. `commit { path, message? }`, **user only**, repo docs → `{ commit }`.
 - `send { conversation, path, comments, note? }`, **user only**: at most 50 comments, each up to 4,000 characters with a quote up to 1,000.
 - `keep { path }`, **user only**: moves a report into `archive/` and returns its new path.
 - `sweep` → `{ deleted }`: deletes the reports last written over 30 days ago, as the daily sweep does.
@@ -35,5 +43,5 @@ Long one-off output (a setup manual, an investigation, a runbook for one machine
 
 - **Repo docs: only `git ls-files '*.md'` from the project root.** Untracked and ignored files (`.env.local`) never appear. No path with a segment starting with `.` appears either (`.env*`, `.claude/`, `.ultimate/`). If the project is not a git repo, the list is empty.
 - **`read` of a repo doc accepts only a path that `list` returned.** It then checks that the real path is the same regular file inside the project root, so a tracked symlink is refused.
-- **It writes no repo file.** Audit: `rg -n "writeFile|rm\(|unlink|rename" ~/.ultimate/extensions/docs` finds only the report writes below, in `keep` and `sweep`.
-- **Reports are the one exception, and only inside the reports folder.** It reads only regular `.md` files directly in the folder or in its `archive/`; it refuses symlinks, folders, names starting with `.`, and any path whose real path is not that file inside the folder. Its only writes are `keep` (user only: creates `archive/` if needed and `rename`s the report into it, never over an existing file) and the sweep (`unlink` of a top-level report over 30 days old; never `archive/`, never anything but `.md`).
+- **Writes only through `write` and `commit`, both user only.** `write` accepts a path `list` returned (or a report), re-checks the real path like `read`, and needs the current hash. `commit` runs `git commit --only` on one listed path and nothing else (no add, push or reset).
+- **Reports are the one exception, and only inside the reports folder.** It reads only regular `.md` files directly in the folder or in its `archive/`; it refuses symlinks, folders, names starting with `.`, and any path whose real path is not that file inside the folder. Its writes are `write` (snapshot into `.history/`, then temp file and rename), `keep` (user only: creates `archive/` if needed and `rename`s the report into it, never over an existing file) and the sweep (`unlink` of a top-level report over 30 days old; never `archive/`, never anything but `.md`).
