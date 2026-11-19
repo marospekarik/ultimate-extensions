@@ -59,7 +59,7 @@ import {
   useViewport,
 } from "@/sdk";
 import type { Viewport } from "@/sdk";
-import { docPath, headingIds, linkify } from "./links.ts";
+import { docPath, findHeading, headingIds, linkify } from "./links.ts";
 import { ARCHIVE, DAY, isReport, limits, shownPath } from "./limits.ts";
 import {
   KeepAction,
@@ -481,7 +481,7 @@ function Body({
     const jump = () => {
       if (!target.hash) return;
       const ids = place();
-      const found = ids.indexOf(target.hash);
+      const found = findHeading(ids, target.hash);
       if (found < 0) return;
       root
         .querySelectorAll("h1, h2, h3, h4, h5, h6")

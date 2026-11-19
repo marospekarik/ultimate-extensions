@@ -81,3 +81,16 @@ export function linkify(body: string, from: string, known: Set<string>) {
     },
   );
 }
+
+const fold = (text: string) =>
+  text
+    .replace(/æ/g, "ae")
+    .replace(/ø/g, "o")
+    .replace(/å/g, "a")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "");
+
+export function findHeading(ids: string[], hash: string) {
+  const exact = ids.indexOf(hash);
+  return exact >= 0 ? exact : ids.map(fold).indexOf(fold(hash));
+}
