@@ -68,9 +68,8 @@ import type {
   SitePreview,
   TimelineItem,
 } from './refs.ts'
+import { Link, SURFACE } from './link.solid.tsx'
 import { PrMark } from './ui.tsx'
-
-const SURFACE = 'pull-requests'
 
 const useSelected = () => useExtensionUiState<number | null>('selected', null)
 /** The head each PR had when its diff was last opened in Review, by `<repo>#<number>`: what Merge pins. */
@@ -1092,41 +1091,6 @@ function OpenCount() {
       {data.prs.length} PRs
       {ready > 0 && <span className="text-success">· {ready} ready</span>}
     </button>
-  )
-}
-
-const prLink = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)\/?(?:[?#].*)?$/
-
-/** A link to one of this repository's PRs opens it here; ⌘- or Ctrl-click still opens GitHub. */
-function Link({ href, children, core }: { href: string; children: ReactNode; core: ReactNode }) {
-  const match = prLink.exec(href)
-  const list = useAction(ListAction, null, { enabled: match !== null })
-  const [, setSelected] = useSelected()
-  const { showSurface } = useUltimate()
-  const n = Number(match?.[2])
-  // Only open PRs of this repository: a merged or closed one, or another repository's, stays a GitHub link.
-  if (
-    !match ||
-    list.data?.status !== 'ok' ||
-    list.data.repo !== match[1] ||
-    !list.data.prs.some((pr) => pr.number === n)
-  )
-    return core
-  return (
-    <a
-      href={href}
-      onClick={(event) => {
-        if (event.metaKey || event.ctrlKey) return
-        event.preventDefault()
-        setSelected(n)
-        showSurface(SURFACE)
-      }}
-      rel="noreferrer"
-      target="_blank"
-      title={`Open PR #${n} in PRs (⌘-click: GitHub)`}
-    >
-      {children}
-    </a>
   )
 }
 
