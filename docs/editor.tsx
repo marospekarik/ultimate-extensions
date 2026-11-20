@@ -234,11 +234,7 @@ export function Editor({
               open(index);
             }}
           >
-            <MessageResponse
-              className="text-[14px] leading-relaxed"
-              mode="static"
-              parseIncompleteMarkdown={false}
-            >
+            <MessageResponse className="text-[14px] leading-relaxed">
               {block.text}
             </MessageResponse>
           </div>

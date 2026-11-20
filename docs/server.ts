@@ -29,6 +29,7 @@ import {
   writeAtomically,
   writeReport,
 } from "./reports.ts";
+import { uploads } from "./upload.ts";
 
 type Host = {
   projectRoot: string;
@@ -272,7 +273,28 @@ const pathOf = (args: unknown) => {
   return path;
 };
 
-export const userActions = ["send", "keep", "write", "commit", "pdf"];
+const uploaders = new Map<string, ReturnType<typeof uploads>>();
+const uploader = (host: Pick<Host, "projectRoot">) => {
+  let found = uploaders.get(host.projectRoot);
+  if (!found) {
+    found = uploads(host.projectRoot);
+    uploaders.set(host.projectRoot, found);
+  }
+  return found;
+};
+
+export const userActions = [
+  "send",
+  "keep",
+  "write",
+  "commit",
+  "pdf",
+  "begin",
+  "chunk",
+  "finish",
+  "abort",
+  "remove",
+];
 
 export const actions = {
   list: (_args: unknown, { host }: Ctx) => list(host),
@@ -307,6 +329,27 @@ export const actions = {
     return commitDoc(host, path, (args as { message?: unknown }).message);
   },
   sweep: (_args: unknown, { host }: Ctx) => sweep(host, Date.now()),
+  begin: (args: unknown, { host }: Ctx) => {
+    const { dir, name, size, onConflict } = (args ?? {}) as Record<
+      string,
+      unknown
+    >;
+    return uploader(host).begin({ dir, name, size, onConflict });
+  },
+  chunk: (args: unknown, { host }: Ctx) => {
+    const { id, index, data } = (args ?? {}) as Record<string, unknown>;
+    return uploader(host).chunk(id, index, data);
+  },
+  finish: (args: unknown, { host }: Ctx) =>
+    uploader(host).finish((args as { id?: unknown } | null)?.id),
+  abort: (args: unknown, { host }: Ctx) =>
+    uploader(host).abort((args as { id?: unknown } | null)?.id),
+  remove: async (args: unknown, { host }: Ctx) => {
+    const path = pathOf(args);
+    if (path.startsWith(REPORTS)) throw new Error("Reports are not in git");
+    await repoFile(host, path);
+    return uploader(host).remove(path);
+  },
   send: async (args: unknown, { host }: Ctx) => {
     const { conversation: id, ...review } = checkComments(args);
     let file = review.path;

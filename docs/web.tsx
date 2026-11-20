@@ -15,7 +15,9 @@ import {
   ListIcon,
   MessageSquareIcon,
   MessageSquarePlusIcon,
+  PlusIcon,
   RefreshCwIcon,
+  Trash2Icon,
   SendIcon,
   Share2Icon,
   XIcon,
@@ -67,12 +69,28 @@ import {
 } from "@/sdk";
 import type { Viewport } from "@/sdk";
 import { Editor } from "./editor.tsx";
+import { Link } from "./link.solid.tsx";
+import {
+  depth,
+  docUrl,
+  nav,
+  notify,
+  openDoc,
+  parseTarget,
+  subscribe,
+} from "./nav.ts";
+import type { Nav } from "./nav.ts";
 import { prefixOf } from "./blocks.ts";
 import { docPath, findHeading, headingIds, linkify } from "./links.ts";
 import { ARCHIVE, DAY, isReport, limits, shownPath } from "./limits.ts";
 import {
+  AbortAction,
+  BeginAction,
+  ChunkAction,
   CommitAction,
   FileAction,
+  FinishAction,
+  RemoveAction,
   HistoryAction,
   PdfAction,
   KeepAction,
@@ -87,52 +105,17 @@ import type { Doc, DocComment, DocComments, Report } from "./refs.ts";
 
 const StandingDoc = docRef<Record<string, number>>("ultimate.standing-agents");
 
-type Target = { path: string; hash: string };
-type Nav = { depth: number };
-
-const parseTarget = (url: URL): Target | undefined => {
-  const path = url.searchParams.get("doc");
-  return path
-    ? { path, hash: decodeURIComponent(url.hash.slice(1)) }
-    : undefined;
-};
-
-let requested: (Target & { push?: boolean }) | undefined = parseTarget(
-  new URL(location.href),
-);
-let anchor = { hash: requested?.hash ?? "" };
-const listeners = new Set<() => void>();
-const subscribe = (listener: () => void) => {
-  listeners.add(listener);
-  return () => void listeners.delete(listener);
-};
-const notify = () => {
-  for (const listener of listeners) listener();
-};
-const depth = () => (history.state as Nav | null)?.depth ?? 0;
-
-export function openDoc(path: string, hash = "") {
-  requested = { path, hash, push: true };
-  notify();
-}
-
-const docUrl = (path: string, hash: string) => {
-  const url = new URL(location.href);
-  url.searchParams.set("doc", path);
-  url.hash = hash ? `#${encodeURIComponent(hash)}` : "";
-  return url;
-};
 
 const useSelected = () => useExtensionUiState<string | null>("selected", null);
 
 function DocLink() {
-  const wanted = useSyncExternalStore(subscribe, () => requested);
+  const wanted = useSyncExternalStore(subscribe, () => nav.requested);
   const [selected, setSelected] = useSelected();
   const { surface, showSurface } = useUltimate();
   useEffect(() => {
     if (wanted === undefined) return;
-    requested = undefined;
-    anchor = { hash: wanted.hash };
+    nav.requested = undefined;
+    nav.anchor = { hash: wanted.hash };
     if (wanted.push && wanted.path !== selected)
       history.pushState(
         { depth: depth() + 1 } satisfies Nav,
@@ -147,7 +130,7 @@ function DocLink() {
     const back = () => {
       const target = parseTarget(new URL(location.href));
       if (!target) return;
-      anchor = { hash: target.hash };
+      nav.anchor = { hash: target.hash };
       setSelected(target.path);
       notify();
     };
@@ -155,7 +138,7 @@ function DocLink() {
     return () => window.removeEventListener("popstate", back);
   }, [setSelected]);
   useEffect(() => {
-    if (requested !== undefined) return;
+    if (nav.requested !== undefined) return;
     const url = new URL(location.href);
     const shown = surface === "docs" ? selected : null;
     if (url.searchParams.get("doc") === shown) return;
@@ -179,32 +162,6 @@ const absoluteLinks = (body: string, from: string) =>
       /\]\((#[^)\s]*)\)/g,
       (_match, hash: string) => `](/${from}${hash})`,
     );
-
-function Link({
-  href,
-  children,
-  core,
-}: {
-  href: string;
-  children: ReactNode;
-  core: ReactNode;
-}) {
-  const path = docPath(href);
-  if (!path) return core;
-  const hash = decodeURIComponent(href.split("#")[1] ?? "");
-  return (
-    <a
-      href={docUrl(path, hash).search + (hash ? `#${hash}` : "")}
-      onClick={(event) => {
-        event.preventDefault();
-        openDoc(path, hash);
-      }}
-      title={`Open ${path}${hash ? `#${hash}` : ""} in Docs`}
-    >
-      {children}
-    </a>
-  );
-}
 
 function groupOf(path: string) {
   const parts = path.split("/");
@@ -303,12 +260,246 @@ function Reports({
   );
 }
 
+type Upload = {
+  key: number;
+  file: File;
+  dir: string;
+  progress: number;
+  status: "queued" | "sending" | "asking" | "done" | "failed";
+  path?: string;
+  message?: string;
+  onConflict?: "replace" | "keep";
+};
+
+function toBase64(bytes: ArrayBuffer) {
+  let binary = "";
+  const view = new Uint8Array(bytes);
+  for (let at = 0; at < view.length; at += 0x8000)
+    binary += String.fromCharCode(...view.subarray(at, at + 0x8000));
+  return btoa(binary);
+}
+
+const failure = (error: unknown) =>
+  (error instanceof Error ? error.message : String(error)).replace(
+    /^docs\/\w+: /,
+    "",
+  );
+
+function useUploads(onDone: (path: string) => void) {
+  const [items, setItems] = useState<Upload[]>([]);
+  const live = useRef<Upload[]>([]);
+  const running = useRef(false);
+  const next = useRef(1);
+  const set = (items: Upload[]) => {
+    live.current = items;
+    setItems(items);
+  };
+  const patch = (key: number, change: Partial<Upload>) =>
+    set(
+      live.current.map((item) =>
+        item.key === key ? { ...item, ...change } : item,
+      ),
+    );
+  const send = async (item: Upload) => {
+    patch(item.key, { status: "sending", progress: 0, message: undefined });
+    let id: string | undefined;
+    try {
+      const begun = await api.action(BeginAction, {
+        dir: item.dir,
+        name: item.file.name,
+        size: item.file.size,
+        onConflict: item.onConflict,
+      });
+      if (begun.status === "conflict")
+        return patch(item.key, { status: "asking", path: begun.path });
+      id = begun.id;
+      for (
+        let at = 0, index = 0;
+        at < item.file.size;
+        index++, at += begun.chunkBytes
+      ) {
+        const slice = await item.file
+          .slice(at, at + begun.chunkBytes)
+          .arrayBuffer();
+        await api.action(ChunkAction, { id, index, data: toBase64(slice) });
+        patch(item.key, {
+          progress: Math.min(1, (at + slice.byteLength) / item.file.size),
+        });
+      }
+      const done = await api.action(FinishAction, { id });
+      patch(item.key, {
+        status: "done",
+        progress: 1,
+        path: done.path,
+        message: `committed ${done.commit}`,
+      });
+      onDone(done.path);
+    } catch (error) {
+      if (id)
+        await api
+          .action(AbortAction, { id })
+          .catch((abort: unknown) => console.warn("docs: abort", abort));
+      patch(item.key, { status: "failed", message: failure(error) });
+    }
+  };
+  const pump = async () => {
+    if (running.current) return;
+    running.current = true;
+    try {
+      for (;;) {
+        const item = live.current.find((entry) => entry.status === "queued");
+        if (!item) break;
+        await send(item);
+      }
+    } finally {
+      running.current = false;
+    }
+  };
+  return {
+    items,
+    add(files: File[], dir: string) {
+      set([
+        ...live.current,
+        ...files.map(
+          (file): Upload => ({
+            key: next.current++,
+            file,
+            dir,
+            progress: 0,
+            status: "queued",
+          }),
+        ),
+      ]);
+      void pump();
+    },
+    answer(key: number, onConflict: "replace" | "keep") {
+      patch(key, { onConflict, status: "queued" });
+      void pump();
+    },
+    dismiss(key: number) {
+      set(live.current.filter((item) => item.key !== key));
+    },
+  };
+}
+
+type Uploads = ReturnType<typeof useUploads>;
+
+function UploadRow({ item, uploads }: { item: Upload; uploads: Uploads }) {
+  return (
+    <li className="border-border/50 border-b px-3 py-1.5 text-[12px]">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate" title={item.file.name}>
+          {item.file.name}
+        </span>
+        <span className="text-muted-foreground/70 shrink-0 font-mono text-[10.5px]">
+          {formatBytes(item.file.size)}
+        </span>
+        {(item.status === "done" ||
+          item.status === "failed" ||
+          item.status === "asking") && (
+          <button
+            aria-label="Dismiss"
+            className="text-muted-foreground hover:text-foreground -m-1 shrink-0 p-1 pointer-coarse:p-2"
+            onClick={() => uploads.dismiss(item.key)}
+            type="button"
+          >
+            <XIcon className="size-3.5" />
+          </button>
+        )}
+      </div>
+      {(item.status === "sending" || item.status === "queued") && (
+        <div
+          aria-label={`Adding ${item.file.name}`}
+          aria-valuenow={Math.round(item.progress * 100)}
+          className="bg-muted mt-1 h-1 overflow-hidden rounded-full"
+          role="progressbar"
+        >
+          <div
+            className="bg-brand h-full transition-[width]"
+            style={{ width: `${item.progress * 100}%` }}
+          />
+        </div>
+      )}
+      {item.message && (
+        <p
+          className={cn(
+            "mt-0.5 font-mono text-[10.5px] break-words",
+            item.status === "failed" ? "text-error" : "text-muted-foreground",
+          )}
+        >
+          {item.message}
+        </p>
+      )}
+      {item.status === "asking" && (
+        <div className="mt-1">
+          <p className="text-muted-foreground font-mono text-[10.5px] break-all">
+            {item.path} exists
+          </p>
+          <div className="mt-1 flex gap-1">
+            <Button
+              className={coarse}
+              onClick={() => uploads.answer(item.key, "replace")}
+              size="xs"
+              variant="outline"
+            >
+              Replace
+            </Button>
+            <Button
+              className={coarse}
+              onClick={() => uploads.answer(item.key, "keep")}
+              size="xs"
+              variant="outline"
+            >
+              Keep both
+            </Button>
+          </div>
+        </div>
+      )}
+    </li>
+  );
+}
+
+const folderOf = (path: string | null) =>
+  path && !isReport(path) ? path.slice(0, path.lastIndexOf("/") + 1) : "";
+
+function AddButton({ dir, uploads }: { dir: string; uploads: Uploads }) {
+  const input = useRef<HTMLInputElement>(null);
+  const where = dir ? `${dir}` : "the repo root";
+  return (
+    <>
+      <Button
+        aria-label="Add files"
+        className="text-muted-foreground hover:text-foreground size-7 shrink-0 pointer-coarse:size-11"
+        onClick={() => input.current?.click()}
+        size="icon"
+        title={`Add PDF or Markdown files to ${where}; each is committed`}
+        variant="ghost"
+      >
+        <PlusIcon className="size-4" />
+      </Button>
+      <input
+        accept=".pdf,.md,application/pdf,text/markdown"
+        className="hidden"
+        multiple
+        onChange={(event) => {
+          const files = [...(event.target.files ?? [])];
+          event.target.value = "";
+          if (files.length) uploads.add(files, dir);
+        }}
+        ref={input}
+        type="file"
+      />
+    </>
+  );
+}
+
 function Files({
   paths,
   folder,
   reports,
   selected,
   onSelect,
+  uploads,
   className,
 }: {
   paths: string[];
@@ -316,6 +507,7 @@ function Files({
   reports: Report[];
   selected: string | null;
   onSelect: (path: string) => void;
+  uploads: Uploads;
   className?: string;
 }) {
   const [filter, setFilter] = useExtensionUiState("filter", "");
@@ -337,13 +529,23 @@ function Files({
   }, [paths, needle]);
   return (
     <nav className={cn("bg-sidebar flex min-h-0 flex-col", className)}>
-      <input
-        aria-label="Filter docs"
-        className="border-border/70 placeholder:text-muted-foreground/60 bg-background focus:border-brand/50 m-2 rounded-md border px-2 py-1 font-mono text-[12px] outline-none pointer-coarse:h-11"
-        onChange={(event) => setFilter(event.target.value)}
-        placeholder={`Filter ${paths.length + reports.length} docs…`}
-        value={filter}
-      />
+      <div className="m-2 flex items-center gap-1">
+        <input
+          aria-label="Filter docs"
+          className="border-border/70 placeholder:text-muted-foreground/60 bg-background focus:border-brand/50 min-w-0 flex-1 rounded-md border px-2 py-1 font-mono text-[12px] outline-none pointer-coarse:h-11"
+          onChange={(event) => setFilter(event.target.value)}
+          placeholder={`Filter ${paths.length + reports.length} docs…`}
+          value={filter}
+        />
+        <AddButton dir={folderOf(selected).replace(/\/$/, "")} uploads={uploads} />
+      </div>
+      {uploads.items.length > 0 && (
+        <ul aria-label="Uploads" className="border-border/50 border-t">
+          {uploads.items.map((item) => (
+            <UploadRow item={item} key={item.key} uploads={uploads} />
+          ))}
+        </ul>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
         <Reports
           filtering={Boolean(needle)}
@@ -486,7 +688,7 @@ function Body({
   onComment: (draft: Draft) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const target = useSyncExternalStore(subscribe, () => anchor);
+  const target = useSyncExternalStore(subscribe, () => nav.anchor);
   useEffect(() => {
     const root = ref.current;
     if (!root) return undefined;
@@ -567,8 +769,6 @@ function Body({
       <div data-docs-markdown>
         <MessageResponse
           className="text-[14px] leading-relaxed"
-          mode="static"
-          parseIncompleteMarkdown={false}
         >
           {linkify(absoluteLinks(doc.body, doc.path), doc.path, known)}
         </MessageResponse>
@@ -1111,10 +1311,93 @@ function Versions({
   );
 }
 
+function Delete({
+  path,
+  onDeleted,
+}: {
+  path: string;
+  onDeleted: () => Promise<unknown>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<{ busy?: boolean; error?: string }>({});
+  const remove = async () => {
+    setState({ busy: true });
+    try {
+      await api.action(RemoveAction, { path });
+      await onDeleted();
+      setOpen(false);
+      setState({});
+    } catch (error) {
+      setState({ error: failure(error) });
+    }
+  };
+  return (
+    <Popover
+      onOpenChange={(next) => {
+        setOpen(next);
+        setState({});
+      }}
+      open={open}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          aria-label="Delete"
+          className={iconCoarse}
+          size="icon-xs"
+          title="Delete this file from the repo (one commit)"
+          variant="ghost"
+        >
+          <Trash2Icon />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 max-w-[calc(100vw-1rem)] p-3">
+        <p className="text-[12.5px] leading-snug">
+          Delete{" "}
+          <span className="font-mono break-all">
+            {path.split("/").pop()}
+          </span>
+          ?
+        </p>
+        <p className="text-muted-foreground mt-1 font-mono text-[11px] leading-snug">
+          git rm and one commit; git history keeps it.
+        </p>
+        {state.error && (
+          <p className="text-error mt-1 font-mono text-[11px] break-words">
+            {state.error}
+          </p>
+        )}
+        <div className="mt-2 flex justify-end gap-1">
+          <Button
+            className={coarse}
+            onClick={() => setOpen(false)}
+            size="xs"
+            variant="ghost"
+          >
+            Cancel
+          </Button>
+          <Button
+            className={coarse}
+            disabled={state.busy}
+            onClick={() => void remove()}
+            size="xs"
+            variant="destructive"
+          >
+            <Trash2Icon />
+            {state.busy ? "Deleting…" : "Delete"}
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function Docs() {
   const list = useAction(ListAction);
   const reports = useAction(ReportsAction);
   const [selected, setSelected] = useSelected();
+  const uploads = useUploads((added) => {
+    void list.refetch().then(() => setSelected(added));
+  });
   const paths = list.data ?? [];
   const known = useMemo(() => new Set(paths), [paths]);
   const reportList = reports.data?.reports ?? [];
@@ -1236,7 +1519,7 @@ function Docs() {
   };
   const main = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (!anchor.hash) main.current?.scrollTo({ top: 0 });
+    if (!nav.anchor.hash) main.current?.scrollTo({ top: 0 });
   }, [path]);
   const data = doc.data;
   const [viewed, setViewed] = useState<File>();
@@ -1292,6 +1575,7 @@ function Docs() {
       folder={reports.data?.folder}
       reports={reportList}
       selected={path}
+      uploads={uploads}
     />
   );
   const report = path !== null && isReport(path) ? data : undefined;
@@ -1497,6 +1781,17 @@ function Docs() {
                   <Share2Icon />
                 </Button>
               )}
+              {!report &&
+                !edit &&
+                (data?.status === "ok" || data?.status === "pdf") && (
+                  <Delete
+                    onDeleted={async () => {
+                      setSelected(null);
+                      await list.refetch();
+                    }}
+                    path={data.path}
+                  />
+                )}
               <Button
                 aria-label="Reload"
                 className="pointer-coarse:size-11"

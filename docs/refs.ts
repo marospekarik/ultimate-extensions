@@ -108,6 +108,40 @@ export const FileAction = actionRef<{ path: string }, { data: string }>(
   "file",
 );
 
+/** What `begin` answers: an upload id to send chunks to, or that the name is taken (ask, then begin again with `onConflict`). */
+export type UploadBegin =
+  | { status: "ok"; id: string; path: string; chunkBytes: number }
+  | { status: "conflict"; path: string };
+
+/**
+ * User only: `{ dir, name, size, onConflict? }` → starts adding a `.md` or `.pdf` (at most 20 MB) to repo folder `dir`
+ * (`""` is the root). `onConflict` is `"replace"` or `"keep"` (keep both: `name (2).pdf`).
+ */
+export const BeginAction = actionRef<
+  { dir: string; name: string; size: number; onConflict?: "replace" | "keep" },
+  UploadBegin
+>("docs", "begin");
+/** User only: `{ id, index, data }` → appends one base64 chunk (at most `chunkBytes`), in order. */
+export const ChunkAction = actionRef<
+  { id: string; index: number; data: string },
+  { received: number }
+>("docs", "chunk");
+/** User only: `{ id }` → moves the upload into place and commits that path alone. */
+export const FinishAction = actionRef<
+  { id: string },
+  { path: string; commit: string }
+>("docs", "finish");
+/** User only: `{ id }` → drops an unfinished upload. */
+export const AbortAction = actionRef<{ id: string }, Record<string, never>>(
+  "docs",
+  "abort",
+);
+/** User only: `{ path }` of a repo doc → `git rm` and a commit of that path alone. */
+export const RemoveAction = actionRef<
+  { path: string },
+  { path: string; commit: string }
+>("docs", "remove");
+
 /** User only: `{ path, html }`, the rendered HTML of a doc → a PDF of it made on demand by headless Chromium, base64; nothing is stored. */
 export const PdfAction = actionRef<
   { path: string; html: string },

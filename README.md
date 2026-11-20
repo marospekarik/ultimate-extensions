@@ -6,7 +6,7 @@ changes Ultimate itself.
 
 | Extension                         | What it does                                                                                       |
 | --------------------------------- | -------------------------------------------------------------------------------------------------- |
-| [docs](docs)                      | Read-only Docs app: the repo's Markdown and the project's reports, with comments and Download.     |
+| [docs](docs)                      | Docs app: the repo's Markdown and PDFs and the project's reports; edit, add, delete, comment.  |
 | [project-rail](project-rail)      | A rail of tiles at the window's left edge, one per running Ultimate project, grouped by machine.   |
 | [pull-requests](pull-requests)    | Review and merge the project's open GitHub pull requests without leaving Ultimate.                 |
 | [subscriptions](subscriptions)    | Claude, Ollama Cloud and Codex subscription usage in the Agent sidebar's Plans block.              |
