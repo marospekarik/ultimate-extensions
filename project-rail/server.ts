@@ -14,6 +14,37 @@ type Host = {
   userHome: string
   projects(): Promise<Project[]>
   system(): { process: { url: string } }
+  onOpen(run: () => Promise<void>): void
+  onClose(run: () => Promise<void>): void
+}
+
+/** How often every other local project's page is asked for, so a stale bundle rebuilds before a click. */
+const PREBUILD_EVERY = 3 * 60_000
+/** A rebuild takes about 15 s; a project slower than this is skipped until the next sweep. */
+const PREBUILD_TIMEOUT = 120_000
+
+/**
+ * Asks each running local project for `/`, one at a time: a fresh one answers in milliseconds, a stale one rebuilds.
+ * Every project loads this extension, so only the one with the lowest URL sweeps, and the machine runs one build at a time.
+ */
+export async function prebuild(host: Host, log: (line: string) => void = () => {}) {
+  const own = host.system().process.url
+  const urls = (await host.projects())
+    .map((project) => (project.current ? own : project.running?.url))
+    .filter((url): url is string => url?.startsWith('http://127.0.0.1:') === true)
+    .toSorted()
+  if (urls[0] !== own) return
+  for (const url of urls) {
+    const started = Date.now()
+    try {
+      const response = await fetch(`${url}/`, { signal: AbortSignal.timeout(PREBUILD_TIMEOUT) })
+      await response.arrayBuffer()
+      if (Date.now() - started > 1000 || !response.ok)
+        log(`${url} ${response.status} ${Date.now() - started} ms`)
+    } catch (error) {
+      log(`${url} failed after ${Date.now() - started} ms: ${String(error)}`)
+    }
+  }
 }
 
 /** Initials of a hyphenated name (`my-app` → `ma`), else its first two letters; a clash takes the next letters. */
@@ -156,4 +187,21 @@ export const actions = {
   },
 }
 
-export default defineExtension({ name: 'project-rail' })
+export default function projectRail(host: Host) {
+  let timer: ReturnType<typeof setInterval> | undefined
+  let sweeping = false
+  const sweep = () => {
+    if (sweeping) return
+    sweeping = true
+    void prebuild(host, (line) => console.log(`[project-rail] prebuild ${line}`))
+      .catch((error) => console.error(`[project-rail] prebuild: ${String(error)}`))
+      .finally(() => (sweeping = false))
+  }
+  host.onClose(async () => clearInterval(timer))
+  host.onOpen(async () => {
+    clearInterval(timer)
+    sweep()
+    timer = setInterval(sweep, PREBUILD_EVERY)
+  })
+  return defineExtension({ name: 'project-rail' })
+}
