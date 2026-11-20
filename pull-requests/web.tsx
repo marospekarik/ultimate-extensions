@@ -33,6 +33,7 @@ import {
   errorMessage,
   formatAgo,
   Header,
+  Provided,
   StatusLine,
   useAction,
   useExtensionUiState,
@@ -67,6 +68,7 @@ import type {
   SitePreview,
   TimelineItem,
 } from './refs.ts'
+import { PrMark } from './ui.tsx'
 
 const SURFACE = 'pull-requests'
 
@@ -177,7 +179,10 @@ function List({
             <span>#{pr.number}</span>
             <span className="min-w-0 truncate">{pr.author === viewer ? 'you' : pr.author}</span>
             <span className="shrink-0 text-muted-foreground/60">· {ago(pr.updatedAt, now)}</span>
-            <span className="ml-auto flex shrink-0 gap-1">
+            <span className="ml-auto flex shrink-0 items-center gap-1">
+              <Provided input={{ number: pr.number, place: 'row' }} point={PrMark}>
+                {(mark) => mark}
+              </Provided>
               {runningLocally.has(pr.number) && <Tag>running</Tag>}
               {previewed.has(previewLabel(pr.number)) && <Tag>preview</Tag>}
               {pr.draft && <Tag>draft</Tag>}
@@ -824,6 +829,9 @@ function Detail({
           <Tag tone={verdict[pr.reviewDecision].tone}>{verdict[pr.reviewDecision].label}</Tag>
         )}
       </div>
+      <Provided input={{ number: pr.number, place: 'detail' }} point={PrMark}>
+        {(mark) => mark}
+      </Provided>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Button disabled={opening} onClick={openDiff} size="sm" variant="outline">

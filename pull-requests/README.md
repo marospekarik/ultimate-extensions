@@ -63,5 +63,9 @@ Actions (`refs.ts`): `list`, `view { number }`, `sitePreview { number }`, `local
 agents; `comment`, `review`, `merge`, `close`, `runLocally` and `stopLocalRun` are user-only (`userActions`), so codemode refuses them. That does not stop an agent with a shell from
 running `gh` itself: the rule that agents never merge covers that.
 
+Other extensions add a quiet mark to a PR through the point `pull-requests.mark` (`ui.tsx`): `row` sits among a list
+row's tags, `detail` is a line under the PR's title. A project extension, which cannot import this file, declares the
+same point by name.
+
 Personal extension: lives in `~/.ultimate/extensions/pull-requests/`, shows in every project. Turn it off with
 `{ "extensions": { "disable": ["pull-requests"] } }`.
