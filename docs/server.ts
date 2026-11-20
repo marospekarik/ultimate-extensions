@@ -19,6 +19,7 @@ import { DocCommentsEntry } from "./refs.ts";
 import type { Doc, DocComment, DocComments } from "./refs.ts";
 import {
   checkSave,
+  deleteReport,
   history,
   keep,
   readReport,
@@ -346,7 +347,7 @@ export const actions = {
     uploader(host).abort((args as { id?: unknown } | null)?.id),
   remove: async (args: unknown, { host }: Ctx) => {
     const path = pathOf(args);
-    if (path.startsWith(REPORTS)) throw new Error("Reports are not in git");
+    if (path.startsWith(REPORTS)) return deleteReport(host, path);
     await repoFile(host, path);
     return uploader(host).remove(path);
   },

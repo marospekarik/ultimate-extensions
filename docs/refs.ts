@@ -136,10 +136,13 @@ export const AbortAction = actionRef<{ id: string }, Record<string, never>>(
   "docs",
   "abort",
 );
-/** User only: `{ path }` of a repo doc → `git rm` and a commit of that path alone. */
+/**
+ * User only: `{ path }` of a repo doc → `git rm` and a commit of that path alone. Of a report (kept or not) → deletes
+ * the file and its saved versions for good; no `commit`.
+ */
 export const RemoveAction = actionRef<
   { path: string },
-  { path: string; commit: string }
+  { path: string; commit?: string }
 >("docs", "remove");
 
 /** User only: `{ path, html }`, the rendered HTML of a doc → a PDF of it made on demand by headless Chromium, base64; nothing is stored. */

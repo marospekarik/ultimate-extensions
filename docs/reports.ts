@@ -135,6 +135,20 @@ export async function keep(host: Homes, path: string) {
   return { path: `${ARCHIVE}${found.name}` };
 }
 
+export async function deleteReport(host: Homes, path: string) {
+  const found = await reportFile(host, path);
+  if (!found) throw new Error(`No report ${path}`);
+  await unlink(found.file);
+  const dir = (await realDir(host))!;
+  const twin = `${found.archived ? REPORTS : ARCHIVE}${found.name}`;
+  if (!(await reportFile(host, twin)))
+    await rm(await confinedHistory(dir, found.name), {
+      recursive: true,
+      force: true,
+    });
+  return { path };
+}
+
 export async function sweep(host: Homes, now: number) {
   const dir = await realDir(host);
   const deleted: string[] = [];

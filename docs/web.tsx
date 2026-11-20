@@ -1344,7 +1344,11 @@ function Delete({
           aria-label="Delete"
           className={iconCoarse}
           size="icon-xs"
-          title="Delete this file from the repo (one commit)"
+          title={
+            isReport(path)
+              ? "Delete this report for good"
+              : "Delete this file from the repo (one commit)"
+          }
           variant="ghost"
         >
           <Trash2Icon />
@@ -1359,7 +1363,9 @@ function Delete({
           ?
         </p>
         <p className="text-muted-foreground mt-1 font-mono text-[11px] leading-snug">
-          git rm and one commit; git history keeps it.
+          {isReport(path)
+            ? "Reports are not in git: it and its saved versions are gone for good and can't be restored."
+            : "git rm and one commit; git history keeps it."}
         </p>
         {state.error && (
           <p className="text-error mt-1 font-mono text-[11px] break-words">
@@ -1781,13 +1787,13 @@ function Docs() {
                   <Share2Icon />
                 </Button>
               )}
-              {!report &&
-                !edit &&
+              {!edit &&
                 (data?.status === "ok" || data?.status === "pdf") && (
                   <Delete
                     onDeleted={async () => {
+                      setPending(empty);
                       setSelected(null);
-                      await list.refetch();
+                      await (report ? reports.refetch() : list.refetch());
                     }}
                     path={data.path}
                   />
