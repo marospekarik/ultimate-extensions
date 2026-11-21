@@ -19,7 +19,7 @@ type Host = {
 type Row = {
   name: string
   unit: string | null
-  status: 'ok' | 'fallback' | 'failed' | 'skipped'
+  status: 'ok' | 'fallback' | 'failed'
   before: number | null
   after: number | null
   reason?: string
