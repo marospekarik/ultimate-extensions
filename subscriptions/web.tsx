@@ -354,5 +354,5 @@ function Plans({ where }: { where: 'rail' | 'phone' }) {
 }
 
 export default defineWebExtension({
-  provides: [provide(BarFooter, (where) => <Plans where={where} />)],
+  provides: [provide(BarFooter, (input) => <Plans where={input.where} />)],
 })

@@ -1,10 +1,12 @@
 import { ArrowUpRightIcon, FlameIcon, FoldersIcon, HouseIcon } from 'lucide-react'
 import { useEffect } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { AllProvided, cn, defineWebExtension, useAction, useNow, useViewport } from '@/sdk'
+import { cn, defineWebExtension, island, useAction, useNow, useViewport } from '@/sdk'
+import { Footer as SolidFooter } from './footer.solid.tsx'
 import { ProjectsAction } from './refs.ts'
 import type { RailProject, RailWarm } from './refs.ts'
-import { BarFooter } from './ui.tsx'
+
+const Footer = island(SolidFooter)
 
 const local = /^(localhost|127\.0\.0\.1|\[::1\])$/
 
@@ -230,9 +232,7 @@ function Rail() {
           </div>
         ))}
         <div className="mt-auto flex shrink-0 flex-col">
-          <AllProvided input="rail" point={BarFooter}>
-            {(blocks) => blocks}
-          </AllProvided>
+          <Footer where="rail" />
         </div>
       </div>
     </nav>
@@ -291,9 +291,7 @@ function PhoneProjects() {
             ))}
           </div>
         ))}
-        <AllProvided input="phone" point={BarFooter}>
-          {(blocks) => blocks}
-        </AllProvided>
+        <Footer where="phone" />
       </PopoverContent>
     </Popover>
   )

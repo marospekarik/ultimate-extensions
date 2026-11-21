@@ -33,7 +33,7 @@ import {
   errorMessage,
   formatAgo,
   Header,
-  Provided,
+  island,
   StatusLine,
   useAction,
   useExtensionUiState,
@@ -69,7 +69,9 @@ import type {
   TimelineItem,
 } from './refs.ts'
 import { Link, SURFACE } from './link.solid.tsx'
-import { PrMark } from './ui.tsx'
+import { Marks } from './marks.solid.tsx'
+
+const PrMarks = island(Marks, { inline: true })
 
 const useSelected = () => useExtensionUiState<number | null>('selected', null)
 /** The head each PR had when its diff was last opened in Review, by `<repo>#<number>`: what Merge pins. */
@@ -179,9 +181,7 @@ function List({
             <span className="min-w-0 truncate">{pr.author === viewer ? 'you' : pr.author}</span>
             <span className="shrink-0 text-muted-foreground/60">· {ago(pr.updatedAt, now)}</span>
             <span className="ml-auto flex shrink-0 items-center gap-1">
-              <Provided input={{ number: pr.number, place: 'row' }} point={PrMark}>
-                {(mark) => mark}
-              </Provided>
+              <PrMarks number={pr.number} place="row" />
               {runningLocally.has(pr.number) && <Tag>running</Tag>}
               {previewed.has(previewLabel(pr.number)) && <Tag>preview</Tag>}
               {pr.draft && <Tag>draft</Tag>}
@@ -828,9 +828,7 @@ function Detail({
           <Tag tone={verdict[pr.reviewDecision].tone}>{verdict[pr.reviewDecision].label}</Tag>
         )}
       </div>
-      <Provided input={{ number: pr.number, place: 'detail' }} point={PrMark}>
-        {(mark) => mark}
-      </Provided>
+      <PrMarks number={pr.number} place="detail" />
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <Button disabled={opening} onClick={openDiff} size="sm" variant="outline">
