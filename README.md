@@ -9,6 +9,7 @@ changes Ultimate itself.
 | [docs](docs)                      | Docs app: the repo's Markdown and PDFs and the project's reports; edit, add, delete, comment.  |
 | [project-rail](project-rail)      | A rail of tiles at the window's left edge, one per running Ultimate project, grouped by machine.   |
 | [pull-requests](pull-requests)    | Review and merge the project's open GitHub pull requests without leaving Ultimate.                 |
+| [restart-projects](restart-projects) | Restarts every other running Ultimate project on this machine, one at a time.                      |
 | [subscriptions](subscriptions)    | Claude, Ollama Cloud and Codex subscription usage in the Agent sidebar's Plans block.              |
 | [theme-sync](theme-sync)          | Light/dark theme shared by every Ultimate project on this machine, switched live.                  |
 
