@@ -51,10 +51,9 @@ async function servedGeneration(url: string, signal: AbortSignal, minimum: numbe
         if (generation >= minimum) return generation
         text = text.slice(found.index + found[0].length)
       }
-    } catch (error) {
+    } catch {
       signal.throwIfAborted()
       // A refused or reset connection is the swap itself: pace and reconnect until the deadline.
-      void error
       await pace(500, signal)
     } finally {
       stream.abort()
@@ -141,6 +140,7 @@ async function restartOne(host: Host, project: Project, own: string, pace: Pace,
 }
 
 let installed: { task: any } | undefined
+let inFlight: Promise<{ rows: Row[] }> | undefined
 
 export default async function restartProjects(host: Host) {
   const { defineEffect } = await import(join(host.ultimateRoot, 'lib/effect.ts'))
@@ -160,12 +160,17 @@ export default async function restartProjects(host: Host) {
 }
 
 export const actions = {
-  async restart(_args: unknown, { host }: { host: Host }) {
-    const { effectResult } = await import(join(host.ultimateRoot, 'lib/effect.ts'))
-    const posting = await host.harness().commit(
-      (tx: any) => tx.createTask(installed!.task, { run: randomUUID() }, { conversationId: ROOT_CONVERSATION_ID, ownership: { kind: 'conversation' } }),
-      BACKGROUND_CONTEXT,
-    )
-    return { rows: await effectResult(host.harness(), posting, BACKGROUND_CONTEXT) }
+  restart(_args: unknown, { host }: { host: Host }) {
+    inFlight ??= (async () => {
+      const { effectResult } = await import(join(host.ultimateRoot, 'lib/effect.ts'))
+      const posting = await host.harness().commit(
+        (tx: any) => tx.createTask(installed!.task, { run: randomUUID() }, { conversationId: ROOT_CONVERSATION_ID, ownership: { kind: 'conversation' } }),
+        BACKGROUND_CONTEXT,
+      )
+      return { rows: (await effectResult(host.harness(), posting, BACKGROUND_CONTEXT)) as Row[] }
+    })().finally(() => {
+      inFlight = undefined
+    })
+    return inFlight
   },
 }
