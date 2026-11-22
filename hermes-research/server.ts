@@ -50,35 +50,38 @@ async function active(id: string) {
 
 type Stream = { session?: string; exitCode?: number; text?: string; tokens?: Tokens; error?: string }
 
-/** The `result` event of a run's stream-json output, once Hermes wrote it. */
-async function result(dir: string): Promise<Stream | undefined> {
-  const file = join(dir, 'out.jsonl')
-  if (!(await exists(file))) return undefined
+async function tail(file: string, bytes: number) {
+  if (!(await exists(file))) return ''
   const handle = await open(file, 'r')
   try {
     const { size } = await handle.stat()
-    const chunk = Math.min(size, 4 * 1024 * 1024)
+    const chunk = Math.min(size, bytes)
     const buffer = Buffer.alloc(chunk)
     await handle.read(buffer, 0, chunk, size - chunk)
-    const line = buffer.toString('utf8').trimEnd().split('\n').at(-1)
-    if (!line?.includes('"type": "result"') && !line?.includes('"type":"result"')) return undefined
-    const event = JSON.parse(line) as {
-      session_id?: string
-      exit_code?: number
-      text?: string
-      error?: string
-      tokens?: { input?: number; output?: number; total?: number; cache_read?: number }
-    }
-    const t = event.tokens ?? {}
-    return {
-      session: event.session_id || undefined,
-      exitCode: event.exit_code,
-      text: event.text,
-      error: event.error,
-      tokens: { input: t.input ?? 0, output: t.output ?? 0, cacheRead: t.cache_read ?? 0, total: t.total ?? 0 },
-    }
+    return buffer.toString('utf8')
   } finally {
     await handle.close()
+  }
+}
+
+/** The `result` event of a run's stream-json output, once Hermes wrote it. */
+async function result(dir: string): Promise<Stream | undefined> {
+  const line = (await tail(join(dir, 'out.jsonl'), 4 * 1024 * 1024)).trimEnd().split('\n').at(-1)
+  if (!line?.includes('"type": "result"') && !line?.includes('"type":"result"')) return undefined
+  const event = JSON.parse(line) as {
+    session_id?: string
+    exit_code?: number
+    text?: string
+    error?: string
+    tokens?: { input?: number; output?: number; total?: number; cache_read?: number }
+  }
+  const t = event.tokens ?? {}
+  return {
+    session: event.session_id || undefined,
+    exitCode: event.exit_code,
+    text: event.text,
+    error: event.error,
+    tokens: { input: t.input ?? 0, output: t.output ?? 0, cacheRead: t.cache_read ?? 0, total: t.total ?? 0 },
   }
 }
 
@@ -214,7 +217,7 @@ export default async function hermesResearch(host: Host) {
             '-p', `StandardOutput=file:${out}`,
             '-p', `StandardError=file:${join(item.dir, 'err.log')}`,
             HERMES, ...args,
-          ])
+          ]).catch((error: unknown) => writeFile(join(item.dir, 'err.log'), `Starting Hermes failed: ${message(error)}\n`))
         }
         await runtime.commit(() => ({ status: 'running', checkpoint: { phase: 'watch' } }), ctx)
       },
@@ -232,7 +235,7 @@ export default async function hermesResearch(host: Host) {
         const row = withDb((db) => sessionRow(db, { ...item, ...(session ? { session } : {}) }))
         const model = row?.model ?? item.model
         const apiCalls = row ? row.api_call_count - (item.base?.apiCalls ?? 0) : undefined
-        let state: RunState = item.stopping ? 'stopped' : ended && ended.exitCode === 0 && ended.text ? 'done' : 'failed'
+        let state: RunState = ended && ended.exitCode === 0 && ended.text ? 'done' : item.stopping ? 'stopped' : 'failed'
         let error: string | undefined
         let report: { name: string; path: string } | undefined
         if (state === 'done') {
@@ -243,7 +246,7 @@ export default async function hermesResearch(host: Host) {
             error = `Writing the brief failed: ${message(failure)}`
           }
         } else if (state === 'failed') {
-          const log = await readFile(join(item.dir, 'err.log'), 'utf8').catch(() => '')
+          const log = await tail(join(item.dir, 'err.log'), 16 * 1024)
           error = ended?.error || log.trim().split('\n').filter((line) => !/Bitwarden|^Session:|^session_id:|^\s*$/.test(line)).slice(-5).join('\n') || 'Hermes ended without a result'
         } else error = 'Stopped from its card.'
         let text = ''
