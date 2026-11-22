@@ -32,10 +32,20 @@ import {
 } from "./reports.ts";
 import { uploads } from "./upload.ts";
 
+type Project = {
+  root?: string;
+  name: string;
+  home: string;
+  current: boolean;
+  running?: { url: string };
+};
+
 type Host = {
   projectRoot: string;
   userHome: string;
   home: string;
+  projects(): Promise<Project[]>;
+  want<S>(api: { name: string }): S | undefined;
   harness(): Harness;
   conversations(): { id: number }[];
   notice(message: string): void;
@@ -54,6 +64,61 @@ const missing = (error: unknown): undefined => {
   throw error;
 };
 
+async function tailnetPorts(userHome: string): Promise<Record<string, number>> {
+  const text = await readFile(
+    join(userHome, ".ultimate/tailscale.json"),
+    "utf8",
+  ).catch(missing);
+  if (!text) return {};
+  const registry = JSON.parse(text) as {
+    ports?: Record<string, { port: number }>;
+  };
+  return Object.fromEntries(
+    Object.entries(registry.ports ?? {}).map(([root, { port }]) => [
+      root,
+      port,
+    ]),
+  );
+}
+
+export async function otherProjects(host: Host) {
+  const own = host
+    .want<{ status(): { url?: string } }>({ name: "tailscale" })
+    ?.status().url;
+  const [projects, ports] = await Promise.all([
+    host.projects(),
+    tailnetPorts(host.userHome),
+  ]);
+  return projects.flatMap((project) => {
+    if (project.current || !project.running) return [];
+    const port = project.root ? ports[project.root] : undefined;
+    const tailnet = own && port ? new URL(own) : undefined;
+    if (tailnet) tailnet.port = String(port);
+    const url = tailnet ? tailnet.origin : project.running.url;
+    const reports = join(
+      host.userHome,
+      ".ultimate/reports",
+      project.home.split(sep).at(-1)!,
+    );
+    return [{ name: project.name, url, reports }];
+  });
+}
+
+const LINKS =
+  "When you write a report or doc, link what it mentions so the reader can tap it in Docs: a repo file as [name](/path/to/file.md) with a leading slash, and only a git-tracked file (commit it first); a report as [name](/.reports/YYYY-MM-DD-slug.md); a section as [step 3B](#step-3b) or [name](/path.md#section), where the anchor is the heading in lowercase, punctuation removed, spaces as hyphens (GitHub style; a repeated heading gets -1, -2); a site as a real link or a bare domain such as skat.dk. A doc that uses short ids (02b, step 3B) starts with a reference table whose rows link each id to its file or section.";
+
+export async function linksSection(host: Host) {
+  const others = await otherProjects(host);
+  if (others.length === 0) return LINKS;
+  return [
+    LINKS,
+    "Those links open in this project only. A report or doc that belongs to another project (one you wrote into its reports folder, or a file in its repo) is linked with the full URL of that project's own instance: [name](<url>/?doc=.reports/YYYY-MM-DD-slug.md) for a report, [name](<url>/?doc=path/to/file.md) for a repo file, #section appended for a section. The other running projects, with the URL the user opens each at and its reports folder:",
+    ...others.map(
+      (project) => `- ${project.name}: ${project.url} (reports: ${project.reports}/)`,
+    ),
+  ].join("\n");
+}
+
 export default function docs(host: Host) {
   const run = () =>
     sweep(host, Date.now()).catch((error: unknown) =>
@@ -70,11 +135,7 @@ export default function docs(host: Host) {
   return defineExtension({
     name: "docs",
     sections: [
-      section(
-        "docs_links",
-        () =>
-          "When you write a report or doc, link what it mentions so the reader can tap it in Docs: a repo file as [name](/path/to/file.md) with a leading slash, and only a git-tracked file (commit it first); a report as [name](/.reports/YYYY-MM-DD-slug.md); a section as [step 3B](#step-3b) or [name](/path.md#section), where the anchor is the heading in lowercase, punctuation removed, spaces as hyphens (GitHub style; a repeated heading gets -1, -2); a site as a real link or a bare domain such as skat.dk. A doc that uses short ids (02b, step 3B) starts with a reference table whose rows link each id to its file or section.",
-      ),
+      section("docs_links", () => linksSection(host)),
     ],
   });
 }
