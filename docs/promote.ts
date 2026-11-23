@@ -63,12 +63,16 @@ async function trackedDocs(root: string) {
     .filter((path) => path && path.split("/").every((p) => !p.startsWith(".")));
 }
 
+const NOT_DOCS =
+  /(^|\/)(tests?|__tests__|fixtures?|node_modules|vendor|dist|build|skills?|\.[^/]+)(\/|$)/i;
+
 export function docFolders(paths: string[]) {
   const counts = new Map<string, string[]>();
   for (const path of paths) {
     const at = path.lastIndexOf("/");
     if (at < 0) continue;
     const dir = path.slice(0, at);
+    if (NOT_DOCS.test(dir)) continue;
     counts.set(dir, [...(counts.get(dir) ?? []), path.slice(at + 1)]);
   }
   return counts;

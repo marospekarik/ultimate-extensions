@@ -205,13 +205,21 @@ const absoluteLinks = (body: string, from: string) =>
 const IMAGE = "streamdown:docimg/";
 
 const imageLinks = (body: string, from: string) =>
-  body.replace(
-    /!\[([^\]\n]*)\]\(([^)\s]+)((?:\s+"[^"]*")?)\)/g,
-    (match, alt: string, target: string, title: string) => {
-      const path = imagePath(target, from);
-      return path ? `![${alt}](${IMAGE}${encodeURI(path)}${title})` : match;
-    },
-  );
+  body
+    .replace(
+      /!\[([^\]\n]*)\]\(([^)\s]+)((?:\s+"[^"]*")?)\)/g,
+      (match, alt: string, target: string, title: string) => {
+        const path = imagePath(target, from);
+        return path ? `![${alt}](${IMAGE}${encodeURI(path)}${title})` : match;
+      },
+    )
+    .replace(
+      /(<img\b[^>]*?\ssrc=)(["'])([^"']+)\2/gi,
+      (match, head: string, quote: string, target: string) => {
+        const path = imagePath(target, from);
+        return path ? `${head}${quote}${IMAGE}${encodeURI(path)}${quote}` : match;
+      },
+    );
 
 function loadImages(root: HTMLElement, urls: string[]) {
   for (const image of root.querySelectorAll<HTMLImageElement>(
@@ -1747,7 +1755,9 @@ function Promote(props: {
                     value={shownDir()}
                   />
                   <datalist id="docs-promote-folders">
-                    <For each={data().dirs}>{(item) => <option value={item()} />}</For>
+                    <For each={data().dirs} keyed={(item) => item}>
+                      {(item) => <option value={item()} />}
+                    </For>
                   </datalist>
                 </label>
                 <label class="flex flex-col gap-1">
