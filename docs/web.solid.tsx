@@ -17,6 +17,7 @@ import {
   MessageSquarePlusIcon,
   PencilIcon,
   PlusIcon,
+  GitPullRequestArrowIcon,
   RefreshCwIcon,
   SendIcon,
   Share2Icon,
@@ -44,6 +45,10 @@ import {
   CommandList,
 } from "@/components/ui/command.solid.tsx";
 import { Form } from "@/components/ui/form.solid.tsx";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/segmented-control.solid.tsx";
 import { Input, Textarea } from "@/components/ui/input.solid.tsx";
 import {
   Popover,
@@ -91,8 +96,21 @@ import {
 } from "./nav.ts";
 import type { Nav } from "./nav.ts";
 import { prefixOf } from "./blocks.ts";
-import { docPath, findHeading, headingIds, linkify } from "./links.ts";
-import { ARCHIVE, DAY, isReport, limits, shownPath } from "./limits.ts";
+import {
+  docPath,
+  findHeading,
+  headingIds,
+  imagePath,
+  linkify,
+} from "./links.ts";
+import {
+  ARCHIVE,
+  DAY,
+  imageType,
+  isReport,
+  limits,
+  shownPath,
+} from "./limits.ts";
 import {
   AbortAction,
   BeginAction,
@@ -105,6 +123,9 @@ import {
   KeepAction,
   ListAction,
   PdfAction,
+  PromoteAction,
+  PromotedAction,
+  PromotePlanAction,
   ReadAction,
   RemoveAction,
   ReportsAction,
@@ -180,6 +201,45 @@ const absoluteLinks = (body: string, from: string) =>
       /\]\((#[^)\s]*)\)/g,
       (_match, hash: string) => `](/${from}${hash})`,
     );
+
+const IMAGE = "streamdown:docimg/";
+
+const imageLinks = (body: string, from: string) =>
+  body.replace(
+    /!\[([^\]\n]*)\]\(([^)\s]+)((?:\s+"[^"]*")?)\)/g,
+    (match, alt: string, target: string, title: string) => {
+      const path = imagePath(target, from);
+      return path ? `![${alt}](${IMAGE}${encodeURI(path)}${title})` : match;
+    },
+  );
+
+function loadImages(root: HTMLElement, urls: string[]) {
+  for (const image of root.querySelectorAll<HTMLImageElement>(
+    `img[src^="${IMAGE}"]`,
+  )) {
+    const path = decodeURI(image.getAttribute("src")!.slice(IMAGE.length));
+    image.removeAttribute("src");
+    image.alt ||= path;
+    api.action(FileAction, { path }).then(
+      ({ data }) => {
+        const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+        const url = URL.createObjectURL(
+          new Blob([bytes], { type: imageType(path) }),
+        );
+        urls.push(url);
+        image.src = url;
+      },
+      () => {
+        image.replaceWith(
+          Object.assign(document.createElement("span"), {
+            className: "text-muted-foreground font-mono text-[12px]",
+            textContent: `[image not found: ${path}]`,
+          }),
+        );
+      },
+    );
+  }
+}
 
 function groupOf(path: string) {
   const parts = path.split("/");
@@ -753,16 +813,20 @@ function Body(props: {
           .querySelectorAll(headingSelector)
           [found].scrollIntoView({ block: "start" });
       };
+      const urls: string[] = [];
       place();
+      loadImages(root, urls);
       jump();
       const watch = new MutationObserver(() => {
         place();
+        loadImages(root, urls);
       });
       watch.observe(root, { childList: true, subtree: true });
       const settle = setTimeout(jump, 150);
       return () => {
         clearTimeout(settle);
         watch.disconnect();
+        for (const url of urls) URL.revokeObjectURL(url);
       };
     },
   );
@@ -815,7 +879,10 @@ function Body(props: {
         <Markdown
           class="text-[14px] leading-relaxed"
           text={linkify(
-            absoluteLinks(props.doc.body, props.doc.path),
+            imageLinks(
+              absoluteLinks(props.doc.body, props.doc.path),
+              props.doc.path,
+            ),
             props.doc.path,
             props.known,
           )}
@@ -1591,6 +1658,188 @@ function Delete(props: {
   );
 }
 
+function Promote(props: {
+  path: string;
+  onDone: () => Promise<unknown>;
+}) {
+  const [open, setOpen] = createSignal(false);
+  const [state, setState] = createSignal<{ busy?: boolean; error?: string }>(
+    {},
+  );
+  const plan = useAction(PromotePlanAction, {
+    get path() {
+      return props.path;
+    },
+  });
+  const [dir, setDir] = createSignal<string | null>(null);
+  const [name, setName] = createSignal<string | null>(null);
+  const [links, setLinks] = createSignal<"rewrite" | "keep">("rewrite");
+  const shownDir = () => dir() ?? plan.data()?.dir ?? "";
+  const shownName = () => name() ?? plan.data()?.name ?? "";
+  const reportLinks = () => plan.data()?.reportLinks ?? [];
+  const images = () => plan.data()?.images ?? [];
+  const submit = async () => {
+    setState({ busy: true });
+    try {
+      await api.action(PromoteAction, {
+        path: props.path,
+        dir: shownDir(),
+        name: shownName(),
+        links: links(),
+      });
+      await props.onDone();
+      setOpen(false);
+      setState({});
+    } catch (error) {
+      setState({ error: failure(error) });
+    }
+  };
+  return (
+    <Popover
+      onOpenChange={(next) => {
+        setOpen(next);
+        setState({});
+        if (next) {
+          setDir(null);
+          setName(null);
+          void plan.refetch();
+        }
+      }}
+      open={open()}
+    >
+      <PopoverTrigger
+        render={(trigger) => (
+          <Button
+            {...trigger}
+            aria-label="Promote to repo"
+            class={iconCoarse}
+            size="icon-xs"
+            title="Promote: copy this report into the repo"
+            variant="ghost"
+          />
+        )}
+      >
+        <GitPullRequestArrowIcon />
+      </PopoverTrigger>
+      <PopoverContent align="end" class="w-80 max-w-[calc(100vw-1rem)] p-3">
+        <Form class="flex flex-col gap-2">
+          <p class="text-[12.5px] leading-snug">Promote to the repo</p>
+          <Show
+            when={plan.data()}
+            fallback={
+              <p class="text-muted-foreground font-mono text-[11px]">
+                {plan.error() ? failure(plan.error()) : "Reading the repo…"}
+              </p>
+            }
+          >
+            {(data) => (
+              <>
+                <label class="flex flex-col gap-1">
+                  <span class="text-muted-foreground font-mono text-[11px]">
+                    Folder
+                    {data().by === "classify" ? " · suggested by a model" : ""}
+                  </span>
+                  <Input
+                    aria-label="Promote folder"
+                    class="pointer-coarse:h-11"
+                    list="docs-promote-folders"
+                    onValueChange={setDir}
+                    value={shownDir()}
+                  />
+                  <datalist id="docs-promote-folders">
+                    <For each={data().dirs}>{(item) => <option value={item()} />}</For>
+                  </datalist>
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-muted-foreground font-mono text-[11px]">
+                    File name
+                  </span>
+                  <Input
+                    aria-label="Promote file name"
+                    class="pointer-coarse:h-11"
+                    onValueChange={setName}
+                    value={shownName()}
+                  />
+                </label>
+                <Show when={reportLinks().length > 0}>
+                  <div class="border-border/70 rounded-md border p-2">
+                    <p class="text-[12px] leading-snug">
+                      {reportLinks().length} link
+                      {reportLinks().length === 1 ? "" : "s"} to{" "}
+                      <span class="font-mono">/.reports/</span> break in the
+                      repo.
+                    </p>
+                    <SegmentedControl
+                      aria-label="Report links"
+                      bind={[links, setLinks]}
+                      class="mt-1.5"
+                    >
+                      <SegmentedControlItem value="rewrite">
+                        Rewrite or strip
+                      </SegmentedControlItem>
+                      <SegmentedControlItem value="keep">
+                        Leave as is
+                      </SegmentedControlItem>
+                    </SegmentedControl>
+                    <p class="text-muted-foreground mt-1 font-mono text-[11px] leading-snug">
+                      Rewrite points a link at its promoted copy, or leaves its
+                      text without the link.
+                    </p>
+                  </div>
+                </Show>
+                <Show when={images().length > 0}>
+                  <p class="text-muted-foreground font-mono text-[11px] leading-snug">
+                    {images().length} image{images().length === 1 ? "" : "s"}{" "}
+                    copied along.
+                  </p>
+                </Show>
+                <p class="text-muted-foreground font-mono text-[11px] leading-snug">
+                  {data().remote
+                    ? `A branch, a commit, a push and a pull request into ${data().base}.`
+                    : "No remote: one commit on the checked-out branch."}
+                </p>
+              </>
+            )}
+          </Show>
+          <Show when={state().error}>
+            <p class="text-error font-mono text-[11px] break-words">
+              {state().error}
+            </p>
+          </Show>
+          <div class="flex justify-end gap-1">
+            <Button
+              class={coarse}
+              onClick={() => setOpen(false)}
+              size="xs"
+              variant="ghost"
+            >
+              Cancel promote
+            </Button>
+            <Button
+              aria-label="Confirm promote"
+              class={coarse}
+              data-agent-confirm={`Copy ${props.path} into the repo`}
+              disabled={
+                state().busy || !plan.data() || !shownName().trim()
+              }
+              onClick={() => submit()}
+              size="xs"
+              type="submit"
+            >
+              <GitPullRequestArrowIcon />
+              {state().busy
+                ? "Promoting…"
+                : plan.data()?.remote
+                  ? "Open PR"
+                  : "Commit"}
+            </Button>
+          </div>
+        </Form>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 type Editing = {
   path: string;
   draft: string;
@@ -1839,6 +2088,11 @@ function Docs() {
       : undefined;
   });
   const kept = () => !!reportDoc()?.path.startsWith(ARCHIVE);
+  const promoted = useAction(PromotedAction, {
+    get path() {
+      return report() ? (path() ?? "") : "";
+    },
+  });
   const expires = () =>
     reportList().find((item) => item.path === path())?.expires;
   const statusError = () => keeping().error ?? saving().error;
@@ -1897,6 +2151,26 @@ function Docs() {
                   ? "· kept"
                   : `· deleted in ${Math.max(0, Math.ceil((expires()! - now()) / DAY))}d`}
               </span>
+            </Show>
+            <Show when={report() && promoted.data()}>
+              {(done) => (
+                <span class="shrink-0 truncate" title={done().path}>
+                  · promoted{" "}
+                  <Show
+                    fallback={`as ${done().commit ?? ""}`}
+                    when={done().url}
+                  >
+                    <a
+                      class="underline"
+                      href={done().url}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      PR
+                    </a>
+                  </Show>
+                </span>
+              )}
             </Show>
             <Show when={statusError()}>
               <span class="text-error truncate" title={statusError()}>
@@ -1993,6 +2267,14 @@ function Docs() {
                 >
                   <ArchiveIcon />
                 </Button>
+              </Show>
+              <Show when={report() && ok() && !edit()}>
+                <Promote
+                  onDone={async () => {
+                    await promoted.refetch();
+                  }}
+                  path={path()!}
+                />
               </Show>
               <Button
                 aria-label="Comment on doc"

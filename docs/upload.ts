@@ -13,7 +13,7 @@ export type Begin =
   | { status: "ok"; id: string; path: string; chunkBytes: number }
   | { status: "conflict"; path: string };
 
-const git = (root: string, args: string[]) =>
+export const git = (root: string, args: string[]) =>
   new Promise<string>((resolve, reject) =>
     execFile(
       "git",
@@ -29,7 +29,7 @@ const git = (root: string, args: string[]) =>
 const pause = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-async function gitLocked(root: string, args: string[]) {
+export async function gitLocked(root: string, args: string[]) {
   for (let attempt = 0; ; attempt++) {
     try {
       return await git(root, args);

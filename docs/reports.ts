@@ -94,6 +94,52 @@ export async function reportFile(host: Homes, path: string) {
   return { file, name: match[2], archived: Boolean(match[1]), stat };
 }
 
+export async function reportImage(host: Homes, path: string) {
+  const rel = path.slice(REPORTS.length).split("/");
+  if (rel.some((part) => !part || part.startsWith(".") || /[\\]/.test(part)))
+    throw new Error(`Not a report image: ${path}`);
+  const dir = await realDir(host);
+  if (!dir) return undefined;
+  const file = join(dir, ...rel);
+  const stat = await lstat(file).catch(absent);
+  if (!stat?.isFile() || !file.startsWith(dir + sep)) return undefined;
+  if ((await realpath(file).catch(absent)) !== file) return undefined;
+  return { file, stat };
+}
+
+export type Promoted = { path: string; url?: string; commit?: string; at: number };
+
+const promotedFile = (dir: string, name: string) =>
+  join(dir, ".promoted", `${name}.json`);
+
+export async function promotedOf(
+  host: Homes,
+  path: string,
+): Promise<Promoted | null> {
+  const found = await reportFile(host, path);
+  const dir = await realDir(host);
+  if (!found || !dir) return null;
+  const text = await readFile(promotedFile(dir, found.name), "utf8").catch(
+    absent,
+  );
+  return text ? (JSON.parse(text) as Promoted) : null;
+}
+
+export async function markPromoted(
+  host: Homes,
+  path: string,
+  record: Promoted,
+) {
+  const found = await reportFile(host, path);
+  const dir = await realDir(host);
+  if (!found || !dir) throw new Error(`No report ${path}`);
+  await mkdir(join(dir, ".promoted"), { recursive: true });
+  await writeFile(
+    promotedFile(dir, found.name),
+    JSON.stringify(record),
+  );
+}
+
 export async function readReport(host: Homes, requested: string): Promise<Doc> {
   const archived = `${ARCHIVE}${requested.slice(REPORTS.length)}`;
   const moved = requested.startsWith(ARCHIVE) ? undefined : archived;
@@ -140,6 +186,7 @@ export async function deleteReport(host: Homes, path: string) {
   if (!found) throw new Error(`No report ${path}`);
   await unlink(found.file);
   const dir = (await realDir(host))!;
+  await rm(promotedFile(dir, found.name), { force: true });
   const twin = `${found.archived ? REPORTS : ARCHIVE}${found.name}`;
   if (!(await reportFile(host, twin)))
     await rm(await confinedHistory(dir, found.name), {

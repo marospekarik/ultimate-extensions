@@ -23,3 +23,14 @@ export const shownPath = (selected: string | null, paths: readonly string[]) =>
   null;
 
 export const HISTORY = 20;
+
+export const IMAGE_TYPES: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+};
+
+export const imageType = (path: string) =>
+  IMAGE_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];

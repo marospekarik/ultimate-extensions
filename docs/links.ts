@@ -1,3 +1,4 @@
+import { ARCHIVE, imageType, REPORTS } from "./limits.ts";
 const TLDS =
   "dk|com|org|net|io|dev|app|eu|se|no|de|uk|co|fi|nl|fr|es|it|ch|at|info|biz|gov|edu|ai";
 
@@ -14,6 +15,23 @@ export function docPath(href: string, from?: string) {
     target.startsWith("/") || !from ? [] : from.split("/").slice(0, -1);
   const parts: string[] = [];
   for (const part of [...base, ...target.split("/")]) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (!parts.pop()) return undefined;
+    } else parts.push(part);
+  }
+  return parts.join("/");
+}
+
+export function imagePath(href: string, from: string) {
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//")) return undefined;
+  const target = href.split("#")[0].split("?")[0];
+  if (!imageType(target)) return undefined;
+  const folder = from.startsWith(ARCHIVE)
+    ? REPORTS.slice(0, -1).split("/")
+    : from.split("/").slice(0, -1);
+  const parts: string[] = [];
+  for (const part of [...(target.startsWith("/") ? [] : folder), ...target.split("/")]) {
     if (part === "" || part === ".") continue;
     if (part === "..") {
       if (!parts.pop()) return undefined;

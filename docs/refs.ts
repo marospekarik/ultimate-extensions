@@ -102,7 +102,10 @@ export const CommitAction = actionRef<
   { commit: string }
 >("docs", "commit");
 
-/** `{ path }` of a PDF that `list` or `reports` returned → its bytes, base64, at most 20 MB. */
+/**
+ * `{ path }` of a PDF that `list` or `reports` returned, or of a tracked image (png, jpg, jpeg, webp, gif) or one under the
+ * reports folder (`.reports/shots/x.png`) → its bytes, base64, at most 20 MB.
+ */
 export const FileAction = actionRef<{ path: string }, { data: string }>(
   "docs",
   "file",
@@ -150,3 +153,43 @@ export const PdfAction = actionRef<
   { path: string; html: string },
   { data: string }
 >("docs", "pdf");
+
+/** Where a promoted report went: the repo path, and the PR url or commit. */
+export type Promoted = { path: string; url?: string; commit?: string; at: number };
+
+/** `{ path }` of a report → where it was promoted to the repo, or null. */
+export const PromotedAction = actionRef<{ path: string }, Promoted | null>(
+  "docs",
+  "promoted",
+);
+
+/** What promoting a report would do: the repo's doc folders, the suggested folder and name, links and images to deal with. */
+export type PromotePlan = {
+  dirs: string[];
+  dir: string;
+  name: string;
+  /** `classify` when a model chose the folder, `default` when a rule did. */
+  by: "classify" | "default";
+  /** The repo has a remote: promoting opens a pull request instead of committing. */
+  remote: boolean;
+  base: string;
+  reportLinks: { text: string; target: string; promoted?: string }[];
+  images: string[];
+};
+
+/** `{ path }` of a report → a suggestion for promoting it; changes nothing. */
+export const PromotePlanAction = actionRef<{ path: string }, PromotePlan>(
+  "docs",
+  "promotePlan",
+);
+
+/**
+ * User only: `{ path, dir, name, links, dry? }` of a report → copies it, with the images it embeds from the reports
+ * folder, into repo folder `dir` as `name`. With a remote: a branch, a commit, a push and `gh pr create` (`dry` stops
+ * before the push and returns the command). Without one: a commit on the checked-out branch. `links` is `"rewrite"`
+ * (`/.reports/` links to promoted reports become repo links, others plain text) or `"keep"`.
+ */
+export const PromoteAction = actionRef<
+  { path: string; dir: string; name: string; links: "rewrite" | "keep"; dry?: boolean },
+  { path: string; commit?: string; url?: string; branch?: string; command?: string[]; dry?: boolean }
+>("docs", "promote");

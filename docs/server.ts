@@ -9,6 +9,7 @@ import { hashOf, parsed } from "./doc.ts";
 import { renderPdf } from "./pdf.ts";
 import {
   DAY,
+  imageType,
   isPdf,
   limits,
   MAX_BYTES,
@@ -22,14 +23,17 @@ import {
   deleteReport,
   history,
   keep,
+  promotedOf,
   readReport,
   reportFile,
+  reportImage,
   reports,
   sweep,
   version,
   writeAtomically,
   writeReport,
 } from "./reports.ts";
+import { plan, promote } from "./promote.ts";
 import { uploads } from "./upload.ts";
 
 type Project = {
@@ -208,12 +212,40 @@ async function repoFile(host: Pick<Host, "projectRoot">, path: string) {
   return { file, stat };
 }
 
-async function pdfBytes(host: Host, path: string) {
-  if (!isPdf(path)) throw new Error(`Not a PDF: ${path}`);
+async function trackedImage(host: Pick<Host, "projectRoot">, path: string) {
+  if (path.split("/").some((part) => !part || part.startsWith(".")))
+    throw new Error(`Not an image the viewer shows: ${path}`);
+  const { stdout } = await runGit(host.projectRoot, [
+    "ls-files",
+    "-z",
+    "--",
+    `:(literal)${path}`,
+  ]);
+  if (stdout.split("\0").every((name) => name !== path))
+    throw new Error(`Not an image the viewer shows: ${path}`);
+  const root = await realpath(host.projectRoot);
+  const file = join(root, path);
+  const stat = await lstat(file).catch(missing);
+  if (
+    !stat?.isFile() ||
+    (await realpath(file)) !== file ||
+    !file.startsWith(root + sep)
+  )
+    throw new Error(`No image ${path}`);
+  return { file, stat };
+}
+
+async function fileBytes(host: Host, path: string) {
+  const image = imageType(path) !== undefined;
+  if (!image && !isPdf(path)) throw new Error(`Not a PDF or image: ${path}`);
   const found = path.startsWith(REPORTS)
-    ? await reportFile(host, path)
-    : await repoFile(host, path);
-  if (!found) throw new Error(`No PDF ${path}`);
+    ? image
+      ? await reportImage(host, path)
+      : await reportFile(host, path)
+    : image
+      ? await trackedImage(host, path)
+      : await repoFile(host, path);
+  if (!found) throw new Error(`No file ${path}`);
   if (found.stat.size > MAX_PDF_BYTES)
     throw new Error(`${path} is over ${MAX_PDF_BYTES / 1024 / 1024} MB`);
   return { data: (await readFile(found.file)).toString("base64") };
@@ -356,6 +388,7 @@ export const userActions = [
   "finish",
   "abort",
   "remove",
+  "promote",
 ];
 
 export const actions = {
@@ -371,7 +404,7 @@ export const actions = {
     const name = path.split("/").pop() ?? "doc";
     return { data: (await renderPdf(name, html)).toString("base64") };
   },
-  file: (args: unknown, { host }: Ctx) => pdfBytes(host, pathOf(args)),
+  file: (args: unknown, { host }: Ctx) => fileBytes(host, pathOf(args)),
   keep: (args: unknown, { host }: Ctx) => keep(host, pathOf(args)),
   write: (args: unknown, { host }: Ctx) => {
     const { text, base } = args as { text?: unknown; base?: unknown };
@@ -390,6 +423,15 @@ export const actions = {
     if (isPdf(path)) throw new Error("PDFs are not editable");
     return commitDoc(host, path, (args as { message?: unknown }).message);
   },
+  promoted: (args: unknown, { host }: Ctx) => {
+    const path = pathOf(args);
+    return path.startsWith(REPORTS) ? promotedOf(host, path) : null;
+  },
+  promotePlan: (args: unknown, { host }: Ctx) => plan(host, pathOf(args)),
+  promote: (args: unknown, { host }: Ctx) =>
+    promote(host, { ...(args as object), path: pathOf(args) } as Parameters<
+      typeof promote
+    >[1]),
   sweep: (_args: unknown, { host }: Ctx) => sweep(host, Date.now()),
   begin: (args: unknown, { host }: Ctx) => {
     const { dir, name, size, onConflict } = (args ?? {}) as Record<
