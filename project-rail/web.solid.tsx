@@ -33,7 +33,7 @@ function useProjects() {
   return () => data() ?? []
 }
 
-/** Tiles by machine, this machine (the current project's) first. */
+/** Tiles by machine, this machine first (the server lists it first, sorted by name). */
 function byMachine(projects: RailProject[]) {
   const groups = new Map<string, RailProject[]>()
   for (const project of projects)

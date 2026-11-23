@@ -157,7 +157,7 @@ export const actions = {
         project.current ? { ...project, running: { url: host.system().process.url } } : project,
       )
       .filter((project) => project.running)
-      .toSorted((a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name))
+      .toSorted((a, b) => a.name.localeCompare(b.name))
     const abbr = abbreviations([...live.map((project) => project.name), ...remote.map((r) => r.name)])
     const remoteTiles = remote.map(async (r, i) => ({
       name: r.name,
