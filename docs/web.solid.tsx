@@ -318,9 +318,7 @@ function useUploads(onDone: (path: string) => void) {
     setItems(updated);
   };
   const patch = (key: number, change: Partial<Upload>) =>
-    set(
-      live.map((item) => (item.key === key ? { ...item, ...change } : item)),
-    );
+    set(live.map((item) => (item.key === key ? { ...item, ...change } : item)));
   const send = async (item: Upload) => {
     patch(item.key, { status: "sending", progress: 0, message: undefined });
     let id: string | undefined;
@@ -381,15 +379,13 @@ function useUploads(onDone: (path: string) => void) {
     add(files: File[], dir: string) {
       set([
         ...live,
-        ...files.map(
-          (file): Upload => ({
-            key: next++,
-            file,
-            dir,
-            progress: 0,
-            status: "queued",
-          }),
-        ),
+        ...files.map((file): Upload => ({
+          key: next++,
+          file,
+          dir,
+          progress: 0,
+          status: "queued",
+        })),
       ]);
       void pump();
     },
@@ -434,9 +430,7 @@ function UploadRow(props: { item: Upload; uploads: Uploads }) {
         </Show>
       </div>
       <Show
-        when={
-          props.item.status === "sending" || props.item.status === "queued"
-        }
+        when={props.item.status === "sending" || props.item.status === "queued"}
       >
         <div
           aria-label={`Adding ${props.item.file.name}`}
@@ -972,12 +966,7 @@ function PdfView(props: {
           <Button
             class="h-11 w-full text-[14px]"
             render={(link) => (
-              <a
-                {...link}
-                href={url()}
-                rel="noreferrer"
-                target="_blank"
-              />
+              <a {...link} href={url()} rel="noreferrer" target="_blank" />
             )}
           >
             <ExternalLinkIcon />
@@ -1089,9 +1078,7 @@ function Recipient(props: { value: number; onChange: (id: number) => void }) {
   const standing = useDocOf(() => ROOT, StandingDoc);
   const agents = createMemo(
     () =>
-      new Map(
-        Object.entries(standing() ?? {}).map(([name, id]) => [id, name]),
-      ),
+      new Map(Object.entries(standing() ?? {}).map(([name, id]) => [id, name])),
   );
   const conversations = useConversations();
   const nameOf = (id: number) =>
@@ -1135,10 +1122,7 @@ function Recipient(props: { value: number; onChange: (id: number) => void }) {
         </span>
         <ChevronDownIcon class="size-3 shrink-0 opacity-60" />
       </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        class="w-[min(24rem,calc(100vw-1rem))] p-0"
-      >
+      <PopoverContent align="end" class="w-[min(24rem,calc(100vw-1rem))] p-0">
         <Command
           autoHighlight={false}
           filter={false}
@@ -1197,6 +1181,84 @@ function Recipient(props: { value: number; onChange: (id: number) => void }) {
   );
 }
 
+type Axis = "x" | "y";
+
+function useResize(options: {
+  key: string;
+  axis: Axis;
+  fallback: number;
+  min: number;
+  max: () => number;
+  grow: 1 | -1;
+}) {
+  const [stored, setStored] = useExtensionUiState<number | null>(
+    options.key,
+    null,
+  );
+  const [dragging, setDragging] = createSignal<number>();
+  const clamp = (size: number) =>
+    Math.round(Math.min(Math.max(size, options.min), options.max()));
+  const size = () => clamp(dragging() ?? stored() ?? options.fallback);
+  const onPointerDown = (
+    event: PointerEvent & { currentTarget: HTMLDivElement },
+  ) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const at = (next: PointerEvent) =>
+      options.axis === "x" ? next.clientX : next.clientY;
+    const start = at(event);
+    const from = size();
+    let live: number | undefined;
+    handle.setPointerCapture(event.pointerId);
+    const move = (next: PointerEvent) => {
+      live = clamp(from + (at(next) - start) * options.grow);
+      setDragging(live);
+    };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      if (live !== undefined) setStored(live);
+      setDragging(undefined);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  };
+  return {
+    size,
+    custom: () => stored() !== null || dragging() !== undefined,
+    dragging: () => dragging() !== undefined,
+    reset: () => setStored(null),
+    onPointerDown,
+  };
+}
+
+function ResizeHandle(props: {
+  axis: Axis;
+  label: string;
+  resize: ReturnType<typeof useResize>;
+  class?: string;
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      class={cn(
+        "absolute z-10 after:absolute after:bg-brand/60 after:opacity-0 after:transition-opacity hover:after:opacity-100",
+        props.axis === "x"
+          ? "inset-y-0 w-2 cursor-col-resize after:inset-y-0 after:left-1/2 after:w-px"
+          : "inset-x-0 h-2 cursor-row-resize after:inset-x-0 after:top-1/2 after:h-px",
+        props.resize.dragging() && "after:opacity-100",
+        props.class,
+      )}
+      onDblClick={props.resize.reset}
+      onPointerDown={props.resize.onPointerDown}
+      title={props.label}
+    />
+  );
+}
+
 function Comments(props: {
   path: string;
   pending: Pending;
@@ -1204,6 +1266,7 @@ function Comments(props: {
   draft: Draft | null;
   setDraft: (draft: Draft | null) => void;
 }) {
+  const viewport = useViewport();
   const standing = useDocOf(() => ROOT, StandingDoc);
   const [to, setTo] = useExtensionUiState<number | null>("to", null);
   const recipient = () => to() ?? standing()?.ultimate ?? 1;
@@ -1212,6 +1275,14 @@ function Comments(props: {
     {},
   );
   const count = () => props.pending.comments.length;
+  const resize = useResize({
+    key: "commentsHeight",
+    axis: "y",
+    fallback: 240,
+    min: 96,
+    max: () => Math.round(window.innerHeight * 0.6),
+    grow: -1,
+  });
   const send = async (source: string | undefined) => {
     setSending(true);
     setResult({});
@@ -1236,107 +1307,123 @@ function Comments(props: {
   };
   return (
     <Show when={count() > 0 || props.draft || result().sent}>
-      <div class="border-border/70 bg-sidebar max-h-[50%] shrink-0 space-y-2 overflow-y-auto border-t px-4 py-2.5 max-md:px-3">
-        <Show when={props.draft}>
-          {(draft) => (
-            <Composer
-              draft={draft()}
-              onAdd={(text) => {
-                props.setPending({
-                  ...props.pending,
-                  comments: [...props.pending.comments, { ...draft(), text }],
-                });
-                props.setDraft(null);
-                setResult({});
-              }}
-              onCancel={() => props.setDraft(null)}
-            />
-          )}
-        </Show>
-        <For each={props.pending.comments} keyed={false}>
-          {(comment, index) => (
-            <div class="border-border/60 group bg-background/60 relative rounded-md border px-2.5 py-2">
-              <Where comment={comment()} />
-              <p class="mt-1 text-[13px] whitespace-pre-wrap">
-                {comment().text}
-              </p>
-              <Button
-                aria-label={`Delete comment ${index + 1}`}
-                class="text-muted-foreground hover:text-foreground absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:top-0 pointer-coarse:right-0 pointer-coarse:size-11 pointer-coarse:opacity-100"
-                onClick={() =>
-                  props.setPending({
-                    ...props.pending,
-                    comments: props.pending.comments.filter(
-                      (_, at) => at !== index,
-                    ),
-                  })
-                }
-                size={null}
-                variant={null}
-              >
-                <XIcon class="size-3.5" />
-              </Button>
-            </div>
-          )}
-        </For>
-        <Show when={count() > 0}>
-          <Textarea
-            aria-label="Overall note"
-            class="border-border/70 placeholder:text-muted-foreground/50 focus-visible:border-brand/50 block min-h-9 w-full resize-y rounded-md border px-2.5 py-1.5 focus-visible:ring-0"
-            maxlength={limits.note}
-            onValueChange={(note) =>
-              props.setPending({ ...props.pending, note })
-            }
-            placeholder="An overall note (optional)"
-            rows={1}
-            value={props.pending.note}
+      <div
+        class={cn(
+          "border-border/70 bg-sidebar relative shrink-0 border-t",
+          !resize.custom() && "max-h-[50%]",
+        )}
+        style={resize.custom() ? { height: `${resize.size()}px` } : undefined}
+      >
+        <Show when={viewport() === "desktop"}>
+          <ResizeHandle
+            axis="y"
+            class="-top-1"
+            label="Resize comments"
+            resize={resize}
           />
         </Show>
-        <Show when={result().error}>
-          <p class="text-error font-mono text-[11.5px]">
-            Not sent: {result().error}
-          </p>
-        </Show>
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="text-muted-foreground flex items-center gap-1.5 font-mono text-[11.5px]">
-            <MessageSquareIcon class="text-brand size-3.5" />
-            {count() > 0 ? `${count()} pending` : null}
-            <Show when={count() === 0 && result().sent !== undefined}>
-              <Button
-                class="hover:text-foreground h-auto font-mono text-[11.5px] font-normal underline-offset-2 hover:underline"
-                onClick={() => {
-                  switchConversation(result().sent! as ConversationId);
-                  showSurface("agent");
+        <div class="h-full max-h-full space-y-2 overflow-y-auto px-4 py-2.5 max-md:px-3">
+          <Show when={props.draft}>
+            {(draft) => (
+              <Composer
+                draft={draft()}
+                onAdd={(text) => {
+                  props.setPending({
+                    ...props.pending,
+                    comments: [...props.pending.comments, { ...draft(), text }],
+                  });
+                  props.setDraft(null);
+                  setResult({});
                 }}
-                size={null}
-                variant={null}
-              >
-                Sent to #{result().sent}
-              </Button>
-            </Show>
-          </span>
-          <Show when={count() > 0}>
-            <div class="ml-auto flex min-w-0 items-center gap-1.5">
-              <Recipient onChange={setTo} value={recipient()} />
-              <Button
-                class={coarse}
-                onClick={() => props.setPending(empty)}
-                size="xs"
-                variant="ghost"
-              >
-                Discard
-              </Button>
-              <Button
-                class={coarse}
-                disabled={sending() || count() > limits.comments}
-                onClick={(_, details) => send(details.source)}
-                size="xs"
-              >
-                {sending() ? "Sending…" : `Send (${count()})`}
-                <ArrowRightIcon />
-              </Button>
-            </div>
+                onCancel={() => props.setDraft(null)}
+              />
+            )}
           </Show>
+          <For each={props.pending.comments} keyed={false}>
+            {(comment, index) => (
+              <div class="border-border/60 group bg-background/60 relative rounded-md border px-2.5 py-2">
+                <Where comment={comment()} />
+                <p class="mt-1 text-[13px] whitespace-pre-wrap">
+                  {comment().text}
+                </p>
+                <Button
+                  aria-label={`Delete comment ${index + 1}`}
+                  class="text-muted-foreground hover:text-foreground absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:top-0 pointer-coarse:right-0 pointer-coarse:size-11 pointer-coarse:opacity-100"
+                  onClick={() =>
+                    props.setPending({
+                      ...props.pending,
+                      comments: props.pending.comments.filter(
+                        (_, at) => at !== index,
+                      ),
+                    })
+                  }
+                  size={null}
+                  variant={null}
+                >
+                  <XIcon class="size-3.5" />
+                </Button>
+              </div>
+            )}
+          </For>
+          <Show when={count() > 0}>
+            <Textarea
+              aria-label="Overall note"
+              class="border-border/70 placeholder:text-muted-foreground/50 focus-visible:border-brand/50 block min-h-9 w-full resize-y rounded-md border px-2.5 py-1.5 focus-visible:ring-0"
+              maxlength={limits.note}
+              onValueChange={(note) =>
+                props.setPending({ ...props.pending, note })
+              }
+              placeholder="An overall note (optional)"
+              rows={1}
+              value={props.pending.note}
+            />
+          </Show>
+          <Show when={result().error}>
+            <p class="text-error font-mono text-[11.5px]">
+              Not sent: {result().error}
+            </p>
+          </Show>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-muted-foreground flex items-center gap-1.5 font-mono text-[11.5px]">
+              <MessageSquareIcon class="text-brand size-3.5" />
+              {count() > 0 ? `${count()} pending` : null}
+              <Show when={count() === 0 && result().sent !== undefined}>
+                <Button
+                  class="hover:text-foreground h-auto font-mono text-[11.5px] font-normal underline-offset-2 hover:underline"
+                  onClick={() => {
+                    switchConversation(result().sent! as ConversationId);
+                    showSurface("agent");
+                  }}
+                  size={null}
+                  variant={null}
+                >
+                  Sent to #{result().sent}
+                </Button>
+              </Show>
+            </span>
+            <Show when={count() > 0}>
+              <div class="ml-auto flex min-w-0 items-center gap-1.5">
+                <Recipient onChange={setTo} value={recipient()} />
+                <Button
+                  class={coarse}
+                  onClick={() => props.setPending(empty)}
+                  size="xs"
+                  variant="ghost"
+                >
+                  Discard
+                </Button>
+                <Button
+                  class={coarse}
+                  disabled={sending() || count() > limits.comments}
+                  onClick={(_, details) => send(details.source)}
+                  size="xs"
+                >
+                  {sending() ? "Sending…" : `Send (${count()})`}
+                  <ArrowRightIcon />
+                </Button>
+              </div>
+            </Show>
+          </div>
         </div>
       </div>
     </Show>
@@ -1461,10 +1548,7 @@ function Delete(props: {
       >
         <Trash2Icon />
       </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        class="w-72 max-w-[calc(100vw-1rem)] p-3"
-      >
+      <PopoverContent align="end" class="w-72 max-w-[calc(100vw-1rem)] p-3">
         <p class="text-[12.5px] leading-snug">
           Delete{" "}
           <span class="font-mono break-all">{props.path.split("/").pop()}</span>
@@ -1603,8 +1687,7 @@ function Docs() {
       });
       return;
     }
-    const start =
-      text === undefined ? current.body : text.slice(prefix.length);
+    const start = text === undefined ? current.body : text.slice(prefix.length);
     if (prefix + current.body !== current.text) {
       setSaving({ error: "This doc's frontmatter can't be edited here." });
       return;
@@ -1706,20 +1789,45 @@ function Docs() {
   const drawer = () => viewport() === "phone";
   const [filesOpen, setFilesOpen] = createSignal(false);
   const trail = useExternal(depth, subscribe);
-  const files = (inDrawer: boolean) => (
-    <Files
-      class={inDrawer ? "flex-1" : "border-border/70 w-72 shrink-0 border-r"}
-      folder={reports.data()?.folder}
-      onSelect={(next) => {
-        setSelected(next);
-        setFilesOpen(false);
-      }}
-      paths={paths()}
-      reports={reportList()}
-      selected={path()}
-      uploads={uploads}
-    />
-  );
+  const filesResize = useResize({
+    key: "filesWidth",
+    axis: "x",
+    fallback: 288,
+    min: 200,
+    max: () => Math.round(window.innerWidth * 0.4),
+    grow: 1,
+  });
+  const files = (inDrawer: boolean) => {
+    const list = (
+      <Files
+        class={inDrawer ? "flex-1" : "h-full"}
+        folder={reports.data()?.folder}
+        onSelect={(next) => {
+          setSelected(next);
+          setFilesOpen(false);
+        }}
+        paths={paths()}
+        reports={reportList()}
+        selected={path()}
+        uploads={uploads}
+      />
+    );
+    if (inDrawer) return list;
+    return (
+      <div
+        class="border-border/70 relative shrink-0 border-r"
+        style={{ width: `${filesResize.size()}px` }}
+      >
+        {list}
+        <ResizeHandle
+          axis="x"
+          class="-right-1"
+          label="Resize docs list"
+          resize={filesResize}
+        />
+      </div>
+    );
+  };
   const report = () => {
     const current = path();
     return current !== null && isReport(current) ? data() : undefined;
@@ -1768,10 +1876,7 @@ function Docs() {
       </Header>
       <div class="flex min-h-0 flex-1">
         <Show when={drawer()} fallback={files(false)}>
-          <FilesDrawer
-            onClose={() => setFilesOpen(false)}
-            open={filesOpen()}
-          >
+          <FilesDrawer onClose={() => setFilesOpen(false)} open={filesOpen()}>
             {files(true)}
           </FilesDrawer>
         </Show>
@@ -2025,8 +2130,8 @@ function Docs() {
               >
                 {(large) => (
                   <p class="text-muted-foreground font-mono text-[12px]">
-                    {large().path} is {formatBytes(large().size ?? 0)}, over
-                    the 1 MB the viewer shows.
+                    {large().path} is {formatBytes(large().size ?? 0)}, over the
+                    1 MB the viewer shows.
                   </p>
                 )}
               </Show>
@@ -2059,11 +2164,7 @@ function Docs() {
               </Show>
               <Show when={!edit() && ok()}>
                 {(current) => (
-                  <Body
-                    doc={current()}
-                    known={known()}
-                    onComment={setDraft}
-                  />
+                  <Body doc={current()} known={known()} onComment={setDraft} />
                 )}
               </Show>
             </div>
