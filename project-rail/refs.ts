@@ -1,5 +1,5 @@
 /** Project rail: the running projects on this machine. Browser-safe. */
-import { actionRef } from '@/sdk'
+import { actionRef } from '@/sdk/solid'
 
 /** Its keep-warm state, from that project's `keep-warm.state` action. */
 export type RailWarm = {

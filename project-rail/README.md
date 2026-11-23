@@ -8,6 +8,6 @@ The top tile is home: this project's conversation. Projects on this machine are 
 
 On a phone the rail is hidden and a title-bar button opens the same list in a popover, with the same machine headings, badges, spinners and flames.
 
-Other extensions can pin a block at the bottom of the bar by providing the `BarFooter` point from `ui.tsx` (input `{ where: 'rail' | 'phone' }`); `subscriptions` provides its Plans block there. In the rail a block should show a compact look while collapsed and its full rows under `group-hover/rail`.
+Other extensions can pin a block at the bottom of the bar by providing the `BarFooter` point from `ui.solid.tsx` (input `{ where: 'rail' | 'phone' }`); `subscriptions` provides its Plans block there. In the rail a block should show a compact look while collapsed and its full rows under `group-hover/rail`.
 
 Personal extension: lives in `~/.ultimate/extensions/project-rail/`, shows in every project. Turn it off with `{ "extensions": { "disable": ["project-rail"] } }`.
