@@ -1,6 +1,6 @@
 /** Docs: the repository's Markdown files, read-only, the project's reports, and comments on them. Browser-safe. */
 import { defineEntry } from "@earendil-works/pi-durable";
-import { actionRef } from "@/sdk";
+import { actionRef } from "@/sdk/solid";
 
 /** One comment on a doc: the text it is about (empty for the doc as a whole), the heading above it, and what to say. */
 export type DocComment = { quote?: string; heading?: string; text: string };

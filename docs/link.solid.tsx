@@ -1,6 +1,6 @@
 /** @jsxImportSource @solidjs/web */
 import { Show } from "solid-js";
-import type { LinkRenderer } from "@/sdk";
+import type { LinkRenderer } from "@/sdk/solid";
 import { docPath } from "./links.ts";
 import { docUrl, openDoc } from "./nav.ts";
 
