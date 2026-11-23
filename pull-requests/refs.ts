@@ -1,5 +1,5 @@
 /** Pull requests: the project's open GitHub PRs through `gh`. Browser-safe. */
-import { actionRef } from '@/sdk'
+import { actionRef } from '@/sdk/solid'
 
 /** A check rolled up: `none` when the PR reports no checks. */
 export type Checks = 'pass' | 'fail' | 'pending' | 'none'

@@ -1,8 +1,9 @@
 /** @jsxImportSource @solidjs/web */
 import { Show } from "solid-js";
-import type { JSX } from "solid-js";
-import type { LinkRenderer } from "@/sdk";
+import type { JSX } from "@solidjs/web";
+
 import { showSurface, useAction, useExtensionUiState } from "@/sdk/solid";
+import type { LinkRenderer } from "@/sdk/solid";
 import { ListAction } from "./refs.ts";
 
 export const SURFACE = "pull-requests";
