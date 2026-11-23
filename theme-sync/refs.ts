@@ -1,4 +1,4 @@
-import { actionRef } from '@/sdk'
+import { actionRef } from '@/sdk/solid'
 
 export type Theme = 'dark' | 'light'
 
