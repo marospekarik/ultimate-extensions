@@ -14,6 +14,8 @@ export type RailWarm = {
 
 export type RailProject = {
   name: string
+  /** Project folder's basename: the key of its colour. */
+  folder: string
   /** Two-letter tile label, unique among the list. */
   abbr: string
   current: boolean

@@ -161,6 +161,7 @@ export const actions = {
     const abbr = abbreviations([...live.map((project) => project.name), ...remote.map((r) => r.name)])
     const remoteTiles = remote.map(async (r, i) => ({
       name: r.name,
+      folder: r.name,
       abbr: abbr[live.length + i],
       current: false,
       url: r.url,
@@ -174,6 +175,7 @@ export const actions = {
         const port = project.root ? registry[project.root]?.port : undefined
         return {
           name: project.name || basename(project.root ?? ''),
+          folder: basename(project.root ?? project.name),
           abbr: abbr[i],
           current: project.current,
           url,

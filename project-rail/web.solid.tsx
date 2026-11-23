@@ -7,6 +7,33 @@ import { Footer } from './footer.solid.tsx'
 import { ProjectsAction } from './refs.ts'
 import type { RailProject, RailWarm } from './refs.ts'
 
+/**
+ * Every folder gets its own hue: Ultimate keeps brand purple, the others are spread evenly round the rest of the wheel
+ * in name order, so the colours differ and stay put for as long as the project set does.
+ */
+const BRAND_HUE = 300
+function hues(folders: string[]) {
+  const others = [...new Set(folders)].filter((f) => f !== 'ultimate').toSorted()
+  const map = new Map<string, number>([['ultimate', BRAND_HUE]])
+  others.forEach((f, k) => map.set(f, (BRAND_HUE + ((k + 1) * 360) / (others.length + 1)) % 360))
+  return map
+}
+
+function Tint(props: { hue?: number; current: boolean; class?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      class={cn(
+        'absolute inset-0 bg-[oklch(0.88_0.07_var(--h))] dark:bg-[oklch(0.42_0.07_var(--h))]',
+        props.current ? 'ring-2 ring-foreground/70' : 'opacity-80',
+        props.class,
+      )}
+      data-project-hue={props.hue}
+      style={{ '--h': `${props.hue ?? 0}` }}
+    />
+  )
+}
+
 const local = /^(localhost|127\.0\.0\.1|\[::1\])$/
 
 /**
@@ -148,7 +175,7 @@ function Badge(props: { count?: number; class?: string }) {
 }
 
 /** A row: the 32px tile the collapsed rail shows, then the name and keep-warm line the hover reveals. */
-function Row(props: { project: RailProject; now: number }) {
+function Row(props: { project: RailProject; now: number; hues: Map<string, number> }) {
   const project = () => props.project
   return (
     <a
@@ -168,7 +195,8 @@ function Row(props: { project: RailProject; now: number }) {
       }
     >
       <span class="relative flex size-8 shrink-0 items-center justify-center font-mono text-[12px]">
-        {project().abbr}
+        <Tint class="rounded-md" current={project().current} hue={props.hues.get(project().folder)} />
+        <span class="relative font-semibold text-neutral-900 dark:text-neutral-50">{project().abbr}</span>
         <Badge count={project().waiting} />
         <Show when={project().busy || project().paused}>
           <span class="absolute -bottom-0.5 -left-0.5 flex size-3.5 items-center justify-center rounded-full bg-sidebar">
@@ -239,6 +267,7 @@ function Rail() {
   const viewport = useViewport()
   const now = useNow(60_000)
   const groups = createMemo(() => byMachine(projects()))
+  const hueOf = createMemo(() => hues(projects().map((project) => project.folder)))
   return (
     <Show when={viewport() !== 'phone'}>
       <nav aria-label="Projects" class="relative w-11 shrink-0">
@@ -258,7 +287,7 @@ function Rail() {
               <div class="contents">
                 <Machine first={i() === 0} name={group()[0]} />
                 <For each={group()[1]} keyed={(project) => project.url}>
-                  {(project) => <Row now={now()} project={project()} />}
+                  {(project) => <Row hues={hueOf()} now={now()} project={project()} />}
                 </For>
               </div>
             )}
@@ -277,6 +306,7 @@ function PhoneProjects() {
   const projects = useProjects()
   const viewport = useViewport()
   const now = useNow(60_000)
+  const hueOf = createMemo(() => hues(projects().map((project) => project.folder)))
   const waiting = () =>
     projects().reduce(
       (sum, project) => sum + (project.current ? 0 : (project.waiting ?? 0)),
@@ -310,8 +340,9 @@ function PhoneProjects() {
                       rel={rel(project())}
                       target={target(project())}
                     >
-                      <span class="w-5 font-mono text-xs text-muted-foreground">
-                        {project().abbr}
+                      <span class="relative flex size-6 shrink-0 items-center justify-center font-mono text-xs font-semibold">
+                        <Tint class="rounded" current={project().current} hue={hueOf().get(project().folder)} />
+                        <span class="relative text-neutral-900 dark:text-neutral-50">{project().abbr}</span>
                       </span>
                       <span class="min-w-0 flex-1 truncate">{project().name}</span>
                       <Show when={project().remote}>
