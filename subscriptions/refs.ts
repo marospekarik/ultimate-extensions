@@ -1,5 +1,5 @@
 /** Subscription usage: Claude Pro's, ChatGPT Codex's and Ollama Cloud's windows, credits and peak hours. Browser-safe. */
-import { actionRef } from '@/sdk'
+import { actionRef } from '@/sdk/solid'
 
 /** One usage window a provider reports, such as a 5-hour session or a week. */
 export type UsageWindow = {
