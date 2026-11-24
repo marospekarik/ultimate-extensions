@@ -149,8 +149,6 @@ const showable = (path: string) =>
   /\.(md|pdf)$/i.test(path) &&
   path.split("/").every((part) => part && !part.startsWith("."));
 
-const LOCAL = "materials/local/";
-
 async function list(host: Pick<Host, "projectRoot">): Promise<string[]> {
   const files = (args: string[]) =>
     runGit(host.projectRoot, [
@@ -161,24 +159,8 @@ async function list(host: Pick<Host, "projectRoot">): Promise<string[]> {
       ...args,
     ]).then(({ stdout }) => stdout.split("\0"));
   try {
-    const [tracked, local] = await Promise.all([
-      files(["--", "*.md", "*.MD", "*.pdf", "*.PDF"]),
-      files([
-        "--others",
-        "--ignored",
-        "--exclude-standard",
-        "--",
-        `${LOCAL}*.md`,
-        `${LOCAL}*.MD`,
-      ]),
-    ]);
-    return [
-      ...new Set(
-        [...tracked, ...local.filter((path) => path.startsWith(LOCAL))].filter(
-          showable,
-        ),
-      ),
-    ].toSorted();
+    const tracked = await files(["--", "*.md", "*.MD", "*.pdf", "*.PDF"]);
+    return [...new Set(tracked.filter(showable))].toSorted();
   } catch (error) {
     if (error instanceof Error && /not a git repository/i.test(error.message))
       return [];

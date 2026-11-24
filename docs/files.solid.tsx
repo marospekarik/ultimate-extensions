@@ -35,7 +35,6 @@ import type { TreeNode } from "./tree.ts";
 
 export const jumpDialog = "docs.jump";
 
-const LOCAL = "materials/local";
 const REPORTS_SHOWN = 5;
 const WARN_DAYS = 7;
 
@@ -221,7 +220,6 @@ const folderOf = (node: TreeNode) =>
 function Folder(props: {
   node: FolderNode;
   depth: number;
-  inLocal: boolean;
   forceOpen: boolean;
   isOpen: (path: string) => boolean;
   setOpen: (path: string, open: boolean) => void;
@@ -229,9 +227,6 @@ function Folder(props: {
   selected: string | null;
   onSelect: (path: string) => void;
 }) {
-  const local = () =>
-    !props.inLocal &&
-    (props.node.path === LOCAL || props.node.path.startsWith(`${LOCAL}/`));
   return (
     <Collapsible
       bind={[
@@ -254,11 +249,6 @@ function Folder(props: {
         />
         <span class="min-w-0 flex-1 truncate">
           {props.node.name}
-          <Show when={local()}>
-            <span class="text-muted-foreground/60 ml-1.5 font-mono text-[10.5px]">
-              local only, not in git
-            </span>
-          </Show>
         </span>
         <span class={countClass}>{props.node.count}</span>
       </CollapsibleTrigger>
@@ -266,7 +256,6 @@ function Folder(props: {
         <Nodes
           depth={props.depth + 1}
           forceOpen={props.forceOpen}
-          inLocal={props.inLocal || local()}
           isOpen={props.isOpen}
           nodes={props.node.children}
           onSelect={props.onSelect}
@@ -282,7 +271,6 @@ function Folder(props: {
 function Nodes(props: {
   nodes: TreeNode[];
   depth: number;
-  inLocal: boolean;
   forceOpen: boolean;
   isOpen: (path: string) => boolean;
   setOpen: (path: string, open: boolean) => void;
@@ -327,7 +315,6 @@ function Nodes(props: {
             <Folder
               depth={props.depth}
               forceOpen={props.forceOpen}
-              inLocal={props.inLocal}
               isOpen={props.isOpen}
               node={folder()}
               onSelect={props.onSelect}
@@ -378,7 +365,6 @@ export function DocTree(props: {
         <Nodes
           depth={0}
           forceOpen={props.filtering}
-          inLocal={false}
           isOpen={(path) => openSet().has(path)}
           nodes={tree()}
           onSelect={props.onSelect}
