@@ -148,23 +148,41 @@ const showable = (path: string) =>
   /\.(md|pdf)$/i.test(path) &&
   path.split("/").every((part) => part && !part.startsWith("."));
 
+const LOCAL = "materials/local/";
+
 async function list(host: Pick<Host, "projectRoot">): Promise<string[]> {
-  const { stdout } = await runGit(host.projectRoot, [
-    "-c",
-    "core.quotePath=false",
-    "ls-files",
-    "-z",
-    "--",
-    "*.md",
-    "*.MD",
-    "*.pdf",
-    "*.PDF",
-  ]).catch((error: unknown) => {
+  const files = (args: string[]) =>
+    runGit(host.projectRoot, [
+      "-c",
+      "core.quotePath=false",
+      "ls-files",
+      "-z",
+      ...args,
+    ]).then(({ stdout }) => stdout.split("\0"));
+  try {
+    const [tracked, local] = await Promise.all([
+      files(["--", "*.md", "*.MD", "*.pdf", "*.PDF"]),
+      files([
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--",
+        `${LOCAL}*.md`,
+        `${LOCAL}*.MD`,
+      ]),
+    ]);
+    return [
+      ...new Set(
+        [...tracked, ...local.filter((path) => path.startsWith(LOCAL))].filter(
+          showable,
+        ),
+      ),
+    ].toSorted();
+  } catch (error) {
     if (error instanceof Error && /not a git repository/i.test(error.message))
-      return { stdout: "", stderr: "" };
+      return [];
     throw error;
-  });
-  return [...new Set(stdout.split("\0").filter(showable))].toSorted();
+  }
 }
 
 async function read(

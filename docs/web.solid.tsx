@@ -651,7 +651,15 @@ function Files(props: {
         <For each={groups()} keyed={(entry) => entry[0]}>
           {(entry) => (
             <section>
-              <h3 class={groupHeading}>{entry()[0] || "Repository"}</h3>
+              <h3 class={groupHeading}>
+                {entry()[0] || "Repository"}
+                <Show when={entry()[0].startsWith("materials/local")}>
+                  <span class="text-muted-foreground/60 tracking-normal normal-case">
+                    {" "}
+                    · local only, not in git
+                  </span>
+                </Show>
+              </h3>
               <For each={entry()[1]}>
                 {(path) => (
                   <FileButton
