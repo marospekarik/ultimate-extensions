@@ -19,6 +19,7 @@ import {
   PlusIcon,
   GitPullRequestArrowIcon,
   RefreshCwIcon,
+  SearchIcon,
   SendIcon,
   Share2Icon,
   Trash2Icon,
@@ -74,6 +75,7 @@ import {
   touchKeyboard,
   useAction,
   useConversations,
+  useDialog,
   useDocOf,
   useExtensionUiState,
   useExternal,
@@ -84,6 +86,7 @@ import {
 } from "@/sdk/solid";
 import type { SolidEntryProps } from "@/sdk/solid";
 import { Editor } from "./editor.solid.tsx";
+import { DocTree, JumpDialog, jumpDialog, Reports } from "./files.solid.tsx";
 import { Link } from "./link.solid.tsx";
 import {
   depth,
@@ -130,6 +133,7 @@ import {
   RemoveAction,
   ReportsAction,
   SendAction,
+  TitlesAction,
   VersionAction,
   WriteAction,
 } from "./refs.ts";
@@ -249,107 +253,9 @@ function loadImages(root: HTMLElement, urls: string[]) {
   }
 }
 
-function groupOf(path: string) {
-  const parts = path.split("/");
-  if (parts.length === 1) return "";
-  if (parts.length >= 3) return `${parts[0]}/${parts[1]}`;
-  return parts[0];
-}
-
 const coarse =
   "pointer-coarse:h-11 pointer-coarse:px-3 pointer-coarse:text-[13px]";
 const iconCoarse = "pointer-coarse:size-11";
-
-function FileButton(props: {
-  path: string;
-  label: string;
-  note?: string;
-  selected: boolean;
-  onSelect: (path: string) => void;
-}) {
-  return (
-    <Button
-      aria-label={props.path}
-      class={cn(
-        "hover:bg-accent/60 h-auto w-full items-baseline justify-start gap-2 rounded-none px-3 py-1 text-left text-[12.5px] font-normal whitespace-normal pointer-coarse:py-3 pointer-coarse:text-[14px]",
-        props.selected && "bg-accent text-foreground",
-      )}
-      onClick={() => props.onSelect(props.path)}
-      size={null}
-      title={props.path}
-      variant={null}
-    >
-      <span class="min-w-0 flex-1 truncate">{props.label}</span>
-      <Show when={props.note}>
-        <span class="text-muted-foreground/70 shrink-0 font-mono text-[10.5px]">
-          {props.note}
-        </span>
-      </Show>
-    </Button>
-  );
-}
-
-const groupHeading =
-  "text-muted-foreground/80 px-3 pt-3 pb-1 font-mono text-[10.5px] tracking-wider uppercase";
-
-function Reports(props: {
-  folder?: string;
-  reports: Report[];
-  filtering: boolean;
-  selected: string | null;
-  onSelect: (path: string) => void;
-}) {
-  const now = useNow(60 * 60_000);
-  const fresh = createMemo(() =>
-    props.reports.filter((report) => !report.archived),
-  );
-  const kept = createMemo(() =>
-    props.reports.filter((report) => report.archived),
-  );
-  const row = (report: () => Report) => (
-    <FileButton
-      label={report().path.slice(report().path.lastIndexOf("/") + 1)}
-      note={
-        report().expires === undefined
-          ? undefined
-          : `${Math.max(0, Math.ceil((report().expires! - now()) / DAY))}d left`
-      }
-      onSelect={props.onSelect}
-      path={report().path}
-      selected={report().path === props.selected}
-    />
-  );
-  return (
-    <>
-      <Show
-        when={
-          fresh().length > 0 ||
-          (props.reports.length === 0 && !props.filtering && props.folder)
-        }
-      >
-        <section title={props.folder}>
-          <h3 class={groupHeading}>Reports</h3>
-          <For each={fresh()} keyed={(report) => report.path}>
-            {row}
-          </For>
-          <Show when={props.reports.length === 0}>
-            <p class="text-muted-foreground/60 truncate px-3 py-1 font-mono text-[11px]">
-              none yet · {props.folder}
-            </p>
-          </Show>
-        </section>
-      </Show>
-      <Show when={kept().length > 0}>
-        <section title={props.folder && `${props.folder}archive/`}>
-          <h3 class={groupHeading}>Reports · kept</h3>
-          <For each={kept()} keyed={(report) => report.path}>
-            {row}
-          </For>
-        </section>
-      </Show>
-    </>
-  );
-}
 
 type Upload = {
   key: number;
@@ -594,30 +500,23 @@ function Files(props: {
   paths: string[];
   folder?: string;
   reports: Report[];
+  titles: Record<string, string>;
   selected: string | null;
   onSelect: (path: string) => void;
   uploads: Uploads;
   class?: string;
 }) {
   const [filter, setFilter] = useExtensionUiState("filter", "");
+  const [, setJump] = useDialog(jumpDialog);
   const needle = createMemo(() => filter().trim().toLowerCase());
+  const matches = (path: string) =>
+    !needle() ||
+    path.toLowerCase().includes(needle()) ||
+    (props.titles[path]?.toLowerCase().includes(needle()) ?? false);
   const shownReports = createMemo(() =>
-    props.reports.filter(
-      (report) => !needle() || report.path.toLowerCase().includes(needle()),
-    ),
+    props.reports.filter((report) => matches(report.path)),
   );
-  const groups = createMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const path of props.paths) {
-      if (needle() && !path.toLowerCase().includes(needle())) continue;
-      const group = groupOf(path);
-      map.set(group, [...(map.get(group) ?? []), path]);
-    }
-    const rank = (group: string) => (group === "" ? 0 : 1);
-    return [...map].toSorted(
-      ([a], [b]) => rank(a) - rank(b) || a.localeCompare(b),
-    );
-  });
+  const shownPaths = createMemo(() => props.paths.filter(matches));
   return (
     <nav class={cn("bg-sidebar flex min-h-0 flex-col", props.class)}>
       <div class="m-2 flex items-center gap-1">
@@ -628,6 +527,16 @@ function Files(props: {
           placeholder={`Filter ${props.paths.length + props.reports.length} docs…`}
           value={filter()}
         />
+        <Button
+          aria-label="Jump to doc"
+          class="text-muted-foreground hover:text-foreground size-7 shrink-0 pointer-coarse:size-11"
+          onClick={() => setJump(true)}
+          size="icon-xs"
+          title="Jump to doc (Ctrl/⌘ P)"
+          variant="ghost"
+        >
+          <SearchIcon class="size-4" />
+        </Button>
         <AddButton
           dir={folderOf(props.selected).replace(/\/$/, "")}
           uploads={props.uploads}
@@ -647,35 +556,17 @@ function Files(props: {
           onSelect={props.onSelect}
           reports={shownReports()}
           selected={props.selected}
+          titles={props.titles}
         />
-        <For each={groups()} keyed={(entry) => entry[0]}>
-          {(entry) => (
-            <section>
-              <h3 class={groupHeading}>
-                {entry()[0] || "Repository"}
-                <Show when={entry()[0].startsWith("materials/local")}>
-                  <span class="text-muted-foreground/60 tracking-normal normal-case">
-                    {" "}
-                    · local only, not in git
-                  </span>
-                </Show>
-              </h3>
-              <For each={entry()[1]}>
-                {(path) => (
-                  <FileButton
-                    label={
-                      entry()[0] ? path.slice(entry()[0].length + 1) : path
-                    }
-                    onSelect={props.onSelect}
-                    path={path}
-                    selected={path === props.selected}
-                  />
-                )}
-              </For>
-            </section>
-          )}
-        </For>
-        <Show when={groups().length === 0 && shownReports().length === 0}>
+        <DocTree
+          filtering={Boolean(needle())}
+          onSelect={props.onSelect}
+          paths={shownPaths()}
+          selected={props.selected}
+          titles={props.titles}
+          total={props.paths.length}
+        />
+        <Show when={shownPaths().length === 0 && shownReports().length === 0}>
           <p class="text-muted-foreground px-3 py-2 font-mono text-[12px]">
             No docs match.
           </p>
@@ -1885,6 +1776,17 @@ function Docs() {
     },
   });
   const data = () => (path() === null ? undefined : doc.data());
+  const titles = useAction(TitlesAction, null, {
+    on: () => ({
+      paths: paths(),
+      reports: reportList().map((report) => [report.path, report.modified]),
+      modified: (() => {
+        const current = data();
+        return current?.status === "ok" ? current.modified : undefined;
+      })(),
+    }),
+  });
+  const titleMap = createMemo(() => titles.data() ?? {});
   const ok = createMemo(() => {
     const current = data();
     return current?.status === "ok" ? current : undefined;
@@ -2076,6 +1978,7 @@ function Docs() {
         paths={paths()}
         reports={reportList()}
         selected={path()}
+        titles={titleMap()}
         uploads={uploads}
       />
     );
@@ -2152,6 +2055,15 @@ function Docs() {
             {files(true)}
           </FilesDrawer>
         </Show>
+        <JumpDialog
+          onSelect={(next) => {
+            setSelected(next);
+            setFilesOpen(false);
+          }}
+          paths={paths()}
+          reports={reportList()}
+          titles={titleMap()}
+        />
         <div class="flex min-w-0 flex-1 flex-col">
           <div class="border-border/60 text-muted-foreground flex h-9 shrink-0 items-center gap-3 border-b px-4 font-mono text-[11.5px] max-md:px-2 max-md:pl-4 pointer-coarse:h-11">
             <Show when={exportable()}>
@@ -2567,6 +2479,13 @@ export default defineWebExtension({
       id: "docs.open",
       title: "Open Docs",
       run: (context) => context.showSurface("docs"),
+    },
+    {
+      id: "docs.jump",
+      title: "Jump to doc",
+      keys: "mod+p",
+      when: (context) => context.surface === "docs",
+      run: (context) => context.open(jumpDialog),
     },
   ],
   slots: { overlay: [DocLink] },

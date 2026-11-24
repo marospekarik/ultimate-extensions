@@ -1,4 +1,4 @@
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, open, readFile, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@earendil-works/chord/context";
 import { defineExtension, section } from "@earendil-works/pi-durable";
@@ -34,6 +34,7 @@ import {
   writeReport,
 } from "./reports.ts";
 import { plan, promote } from "./promote.ts";
+import { titleOf } from "./tree.ts";
 import { uploads } from "./upload.ts";
 
 type Project = {
@@ -183,6 +184,52 @@ async function list(host: Pick<Host, "projectRoot">): Promise<string[]> {
       return [];
     throw error;
   }
+}
+
+const TITLE_HEAD = 4096;
+const titleCache = new Map<string, { modified: number; title?: string }>();
+
+async function headTitle(file: string) {
+  const stat = await lstat(file).catch(missing);
+  if (!stat?.isFile() || (await realpath(file)) !== file) return undefined;
+  const cached = titleCache.get(file);
+  if (cached?.modified === stat.mtimeMs) return cached.title;
+  const handle = await open(file, "r");
+  try {
+    const { buffer, bytesRead } = await handle.read(
+      Buffer.alloc(TITLE_HEAD),
+      0,
+      TITLE_HEAD,
+      0,
+    );
+    const title = titleOf(buffer.subarray(0, bytesRead).toString("utf8"));
+    titleCache.set(file, { modified: stat.mtimeMs, title });
+    return title;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function titles(host: Host): Promise<Record<string, string>> {
+  const root = await realpath(host.projectRoot);
+  const repo = (await list(host))
+    .filter((path) => !isPdf(path))
+    .map((path) => ({ path, file: join(root, path) }));
+  const found = await Promise.all(
+    (await reports(host)).reports
+      .filter((report) => !isPdf(report.path))
+      .map(async (report) => ({
+        path: report.path,
+        file: (await reportFile(host, report.path))?.file,
+      })),
+  );
+  const result: Record<string, string> = {};
+  for (const { path, file } of [...repo, ...found]) {
+    if (!file) continue;
+    const title = await headTitle(file);
+    if (title) result[path] = title;
+  }
+  return result;
 }
 
 async function read(
@@ -411,6 +458,7 @@ export const userActions = [
 
 export const actions = {
   list: (_args: unknown, { host }: Ctx) => list(host),
+  titles: (_args: unknown, { host }: Ctx) => titles(host),
   reports: (_args: unknown, { host }: Ctx) => reports(host),
   read: (args: unknown, { host }: Ctx) => {
     const path = pathOf(args);

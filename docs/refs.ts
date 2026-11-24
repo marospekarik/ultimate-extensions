@@ -49,6 +49,11 @@ export type Report = {
 
 /** No arguments → every git-tracked Markdown file the viewer may show, as repo-relative paths, sorted. */
 export const ListAction = actionRef<null, string[]>("docs", "list");
+/** No arguments → each Markdown doc's and report's title (its first heading, or a frontmatter `title:`), by path; docs without one are left out. */
+export const TitlesAction = actionRef<null, Record<string, string>>(
+  "docs",
+  "titles",
+);
 /**
  * No arguments → the project's reports folder (`~/.ultimate/reports/<name>-<hash>/`) and its reports, newest first,
  * then the kept ones in `archive/`, newest first.
