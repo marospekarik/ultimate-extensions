@@ -2107,7 +2107,7 @@ function Docs() {
                 {statusError()}
               </span>
             </Show>
-            <div class="ml-auto flex shrink-0 items-center gap-1">
+            <div class="ml-auto flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
               <Show when={ready()}>
                 {(file) => (
                   <Button
