@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { promisify } from 'node:util'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
@@ -25,6 +25,7 @@ const POLL = 2000
 const PREVIEW_LINES = 12
 const INLINE_BRIEF = 8000
 const REASONING = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const FORMAT = 'Answer in Markdown, with tables as Markdown pipe tables, never fixed-width text tables.'
 
 const Runs = defineDoc<{ runs: Run[] }>({
   kind: RUNS_KIND,
@@ -169,6 +170,18 @@ async function writeReport(host: Host, item: Run, brief: string, model: string |
   return { name, path: join(folder, name) }
 }
 
+/** The Markdown file the answer names as saved in the run's folder, read in place of the chat copy; else the answer itself. */
+async function savedBrief(item: Run, text: string) {
+  const roots = await Promise.all([item.dir, item.cwd].map((root) => realpath(root).catch(() => root)))
+  for (const [path] of text.matchAll(/[^\s`'"()<>[\]]+\.md\b/g)) {
+    const file = await realpath(resolve(item.cwd, path.replace(/^~(?=\/)/, homedir()))).catch(() => undefined)
+    if (!file || basename(file) === 'prompt.md' || !roots.some((root) => file.startsWith(root + sep))) continue
+    const brief = await readFile(file, 'utf8').catch(() => '')
+    if (brief.trim()) return brief
+  }
+  return text
+}
+
 const preview = (brief: string) => brief.trim().split('\n').slice(0, PREVIEW_LINES).join('\n')
 
 async function update(harness: Harness, id: string, change: (item: Run) => void) {
@@ -204,7 +217,7 @@ export default async function hermesResearch(host: Host) {
         await mkdir(item.dir, { recursive: true })
         const out = join(item.dir, 'out.jsonl')
         if (!(await exists(out)) && !(await active(item.id))) {
-          await writeFile(join(item.dir, 'prompt.md'), item.prompt)
+          await writeFile(join(item.dir, 'prompt.md'), `${item.prompt}\n\n${FORMAT}\n`)
           const args = [
             '-p', PROFILE, 'chat', '--query-file', join(item.dir, 'prompt.md'), '--format', 'stream-json',
             ...(item.model ? ['-m', item.model] : []),
@@ -238,9 +251,10 @@ export default async function hermesResearch(host: Host) {
         let state: RunState = ended && ended.exitCode === 0 && ended.text ? 'done' : item.stopping ? 'stopped' : 'failed'
         let error: string | undefined
         let report: { name: string; path: string } | undefined
+        const brief = state === 'done' ? await savedBrief(item, ended!.text!) : ended?.text
         if (state === 'done') {
           try {
-            report = await writeReport(host, { ...item, ...(session ? { session } : {}) }, ended!.text!, model ?? undefined)
+            report = await writeReport(host, { ...item, ...(session ? { session } : {}) }, brief!, model ?? undefined)
           } catch (failure) {
             state = 'failed'
             error = `Writing the brief failed: ${message(failure)}`
@@ -261,10 +275,10 @@ export default async function hermesResearch(host: Host) {
           if (ended?.tokens) stored.tokens = ended.tokens
           if (report) {
             stored.report = report.name
-            stored.preview = preview(ended!.text!)
+            stored.preview = preview(brief!)
           }
           if (error) stored.error = error
-          text = resultText(stored, report?.path, ended?.text)
+          text = resultText(stored, report?.path, brief)
           return { status: 'running', checkpoint: { phase: 'report', text } }
         }, ctx)
       },
