@@ -113,7 +113,7 @@ async function target(userHome: string, cwd: string, path: string) {
   const home = await realpath(userHome)
   const absolute = resolve(cwd, path.replace(/^~(?=\/|$)/, userHome))
   if (!isAbsolute(absolute) || !(absolute + sep).startsWith(home + sep) || absolute === home)
-    throw new Error(`path must be a file inside ${home}`)
+    throw new Error(`path must be a file inside ${home}: absolute, ~/… or relative to the working directory, not the home folder or another folder itself (example: ~/.ultimate/secrets/my-app.env)`)
   if (absolute.startsWith(join(home, '.ultimate') + sep) && /secrets\.json$/.test(absolute))
     throw new Error("path must not be Ultimate's own secrets file; use the Secrets panel for that")
   const parent = dirname(absolute)
@@ -239,6 +239,7 @@ export default function secretRequest(host: Host) {
     description:
       'Ask the user for credentials of an external service or integration (API keys, tokens) without them pasting values into chat. ' +
       'Shows a masked form in the transcript; the values go from the browser straight into the dotenv file `path` (0600, other lines kept) and never reach you, the transcript or Ultimate Secrets. ' +
+      '`path` rule: absolute, `~/…` or relative to the working directory, inside the home folder, and a file, not a folder (example: `~/my-app/.env`). ' +
       'Returns at once; the result (path, names, counts, never values) arrives as an input when the user saves or cancels: do not poll or wait. ' +
       'The request lives in the `secret-request.requests` document of root conversation 1 (not the calling conversation). `cancel_secret_request` closes your own pending one. ' +
       'Batch every key you know you need into one call. Read docs or `.env.example` for the names, never an existing secret-bearing file. ' +
@@ -248,7 +249,7 @@ export default function secretRequest(host: Host) {
     parameters: obj({
       names: arr(str({ pattern: NAME.source }), { minItems: 1, maxItems: 20, uniqueItems: true, description: 'Environment variable names to ask for' }),
       purpose: str({ minLength: 1, maxLength: 200, description: 'One line telling the user why these are needed' }),
-      path: str({ minLength: 1, description: 'Dotenv file to merge them into: absolute, ~/…, or relative to the working directory; must be inside the home folder' }),
+      path: str({ minLength: 1, description: 'Dotenv file to merge them into: absolute, ~/…, or relative to the working directory; must be inside the home folder and name a file, not a folder (example: ~/my-app/.env)' }),
       describe: opt(map(str({ maxLength: 200 }), { description: 'Optional one-line description per name: what the key is and where to get it' })),
     }),
     async execute(args, api, ctx) {
