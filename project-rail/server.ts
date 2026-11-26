@@ -93,11 +93,12 @@ type WarmState = {
 /** Its open questions and its keep-warm state, each absent when it could not be read. */
 async function details(url: string) {
   const [status, warm, pause] = await Promise.all([
-    action<{ questions?: { count?: number }; busy?: number }>(url, 'status', 'status'),
+    action<{ questions?: { count?: number; newestAt?: number }; busy?: number }>(url, 'status', 'status'),
     action<WarmState>(url, 'keep-warm', 'state'),
     action<{ paused?: boolean }>(url, 'pause', 'state'),
   ])
   const count = status?.questions?.count
+  const waitingSince = status?.questions?.newestAt
   const busy = status?.busy
   const failing =
     warm?.last?.error !== undefined &&
@@ -113,6 +114,7 @@ async function details(url: string) {
       : undefined
   return {
     ...(count === undefined ? {} : { waiting: count }),
+    ...(count && waitingSince !== undefined ? { waitingSince } : {}),
     ...(typeof busy === 'number' ? { busy } : {}),
     ...(pause?.paused ? { paused: true } : {}),
     ...(railWarm ? { warm: railWarm } : {}),

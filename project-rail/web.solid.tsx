@@ -159,14 +159,38 @@ function Spinner(props: { busy?: number; paused?: boolean; class?: string }) {
   )
 }
 
-function Badge(props: { count?: number; class?: string }) {
+const DAY = 24 * 60 * 60_000
+
+const stale = (project: RailProject, now: number) =>
+  project.waitingSince !== undefined && now - project.waitingSince > DAY
+
+/** "3 waiting · newest 2 days ago"; the age follows the rail's clock. */
+function waitingHint(project: RailProject, now: number) {
+  if (!project.waiting) return undefined
+  if (project.waitingSince === undefined) return `${project.waiting} waiting`
+  const minutes = Math.max(0, Math.floor((now - project.waitingSince) / 60_000))
+  const age =
+    minutes < 60
+      ? 'just now'
+      : minutes < 1440
+        ? `${Math.floor(minutes / 60)} h ago`
+        : `${Math.floor(minutes / 1440)} ${minutes < 2880 ? 'day' : 'days'} ago`
+  return `${project.waiting} waiting · newest ${age}`
+}
+
+function Badge(props: { count?: number; class?: string; stale?: boolean; hint?: string }) {
   return (
     <Show when={props.count}>
       <span
+        aria-label={props.hint}
         class={cn(
-          'absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-warning px-1 font-mono text-[9px] leading-none font-semibold text-background',
+          'absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 font-mono text-[9px] leading-none font-semibold',
+          props.stale
+            ? 'bg-warning/40 text-neutral-900 dark:text-neutral-50'
+            : 'bg-warning text-background',
           props.class,
         )}
+        title={props.hint}
       >
         {props.count}
       </span>
@@ -197,7 +221,11 @@ function Row(props: { project: RailProject; now: number; hues: Map<string, numbe
       <span class="relative flex size-8 shrink-0 items-center justify-center font-mono text-[12px]">
         <Tint class="rounded-md" current={project().current} hue={props.hues.get(project().folder)} />
         <span class="relative font-semibold text-neutral-900 dark:text-neutral-50">{project().abbr}</span>
-        <Badge count={project().waiting} />
+        <Badge
+          count={project().waiting}
+          hint={waitingHint(project(), props.now)}
+          stale={stale(project(), props.now)}
+        />
         <Show when={project().busy || project().paused}>
           <span class="absolute -bottom-0.5 -left-0.5 flex size-3.5 items-center justify-center rounded-full bg-sidebar">
             <Spinner busy={project().busy} paused={project().paused} />
@@ -216,7 +244,13 @@ function Row(props: { project: RailProject; now: number; hues: Map<string, numbe
             <ArrowUpRightIcon class="size-3 shrink-0 text-muted-foreground" />
           </Show>
           <Show when={project().waiting}>
-            <span class="ml-auto shrink-0 font-mono text-[10px] text-warning">
+            <span
+              class={cn(
+                'ml-auto shrink-0 font-mono text-[10px] text-warning',
+                stale(project(), props.now) && 'opacity-50',
+              )}
+              title={waitingHint(project(), props.now)}
+            >
               {project().waiting} waiting
             </span>
           </Show>
@@ -349,7 +383,13 @@ function PhoneProjects() {
                         <ArrowUpRightIcon class="size-3 shrink-0 text-muted-foreground" />
                       </Show>
                       <Show when={project().waiting}>
-                        <span class="font-mono text-[10px] text-warning">
+                        <span
+                          class={cn(
+                            'font-mono text-[10px] text-warning',
+                            stale(project(), now()) && 'opacity-50',
+                          )}
+                          title={waitingHint(project(), now())}
+                        >
                           {project().waiting}
                         </span>
                       </Show>

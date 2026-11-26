@@ -29,6 +29,8 @@ export type RailProject = {
   remote?: string
   /** Open questions waiting on the user; absent when its status could not be read. */
   waiting?: number
+  /** When the newest of those questions was asked (ms); the badge fades once it is a day old. */
+  waitingSince?: number
   /** Conversations working right now (its `status` action's `busy`); absent when its status could not be read. */
   busy?: number
   /** Its `pause.state` says it is paused: running work finishes, nothing new starts. */
