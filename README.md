@@ -10,6 +10,7 @@ changes Ultimate itself.
 | [hermes-research](hermes-research) | A `hermes_research` tool: runs a Hermes researcher brief with a live card in the transcript.       |
 | [project-rail](project-rail)      | A rail of tiles at the window's left edge, one per running Ultimate project, grouped by machine.   |
 | [pull-requests](pull-requests)    | Review and merge the project's open GitHub pull requests without leaving Ultimate.                 |
+| [secret-request](secret-request) | A `request_secret` tool: a masked card writes an external service's keys into a dotenv file.     |
 | [restart-projects](restart-projects) | Restarts every other running Ultimate project on this machine, one at a time.                      |
 | [subscriptions](subscriptions)    | Claude, Ollama Cloud and Codex subscription usage in the Agent sidebar's Plans block.              |
 | [theme-sync](theme-sync)          | Light/dark theme shared by every Ultimate project on this machine, switched live.                  |
