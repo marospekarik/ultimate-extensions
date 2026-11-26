@@ -1512,6 +1512,6 @@ export default defineWebExtension({
       run: (context) => context.showSurface(SURFACE),
     },
   ],
-  slots: { "statusline.right": [OpenCount] },
+  slots: { "statusline.right": [{ component: OpenCount, wide: true }] },
   link: Link,
 });
