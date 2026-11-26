@@ -240,6 +240,7 @@ export default function secretRequest(host: Host) {
       'Ask the user for credentials of an external service or integration (API keys, tokens) without them pasting values into chat. ' +
       'Shows a masked form in the transcript; the values go from the browser straight into the dotenv file `path` (0600, other lines kept) and never reach you, the transcript or Ultimate Secrets. ' +
       'Returns at once; the result (path, names, counts, never values) arrives as an input when the user saves or cancels: do not poll or wait. ' +
+      'The request lives in the `secret-request.requests` document of root conversation 1 (not the calling conversation). `cancel_secret_request` closes your own pending one. ' +
       'Batch every key you know you need into one call. Read docs or `.env.example` for the names, never an existing secret-bearing file. ' +
       'Afterwards load the file where a command needs it (`set -a; . <path>; set +a; <command>`) and never print, cat or grep it. ' +
       "For keys Ultimate itself reads (an MCP server's `${NAME}`, an extension's declared secret) send the user to the Secrets panel (⌘K → Secrets) instead. " +
@@ -286,5 +287,20 @@ export default function secretRequest(host: Host) {
       }
     },
   })
-  return defineExtension({ name: 'secret-request', tools: [tool] })
+  const cancel = defineTool({
+    name: 'cancel_secret_request',
+    replay: 'safe',
+    description:
+      'Close a pending `request_secret` request of this conversation (for example a duplicate) without writing anything. The user still saves or cancels through the card; this is for clearing requests you no longer need.',
+    parameters: obj({ request: str({ pattern: '^[0-9a-f]{8}$', description: 'Request id from request_secret' }) }),
+    async execute(args, api) {
+      const item = await find(host.harness(), args.request)
+      if (!item || item.conversation !== api.conversationId) throw new Error('Unknown secret request of this conversation')
+      await settle(host, args.request, (stored) => {
+        stored.state = 'cancelled'
+      })
+      return { output: [{ type: 'text', text: `Request ${args.request} cancelled.` }] }
+    },
+  })
+  return defineExtension({ name: 'secret-request', tools: [tool, cancel] })
 }

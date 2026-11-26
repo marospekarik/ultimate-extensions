@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button.solid.tsx'
 import { SecretInput } from '@/components/ui/input.solid.tsx'
 import {
   actionRef,
+  attention,
   api,
   defineWebExtension,
   docRef,
@@ -180,6 +181,6 @@ export function ResultInput(props: SolidEntryProps) {
 }
 
 export default defineWebExtension({
-  tools: { request_secret: RequestCall },
+  tools: { request_secret: attention(RequestCall) },
   entries: { [RESULT_KIND]: ResultInput },
 })
