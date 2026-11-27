@@ -37,7 +37,18 @@ export type RailProject = {
   paused?: boolean
   /** Absent when its keep-warm state could not be read. */
   warm?: RailWarm
+  /** Tokens in its @ultimate's context (`conversations.context`); absent when they could not be read. */
+  tokens?: number
 }
 
 /** No arguments → every project with a running instance, current first. */
 export const ProjectsAction = actionRef<null, RailProject[]>('project-rail', 'projects')
+
+/**
+ * The ⋯ menu's operations on a project's @ultimate: turn keep-warm on or off, compact then turn it off, or start a
+ * dream as its Dream button does (`dream.start`, so that @ultimate starts the dream branch).
+ */
+export type RailOp = 'warm-on' | 'warm-off' | 'compact-off' | 'dream'
+
+/** `{ url, op }`: run `op` on the project running at `url` on this machine. User-only. */
+export const ManageAction = actionRef<{ url: string; op: RailOp }, null>('project-rail', 'manage')

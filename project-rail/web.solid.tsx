@@ -1,11 +1,34 @@
 /** @jsxImportSource @solidjs/web */
-import { ArrowUpRightIcon, FlameIcon, FoldersIcon, HouseIcon } from '@lucide/solid'
+import {
+  ArrowUpRightIcon,
+  Ellipsis,
+  FlameIcon,
+  FoldersIcon,
+  FoldVerticalIcon,
+  HouseIcon,
+  MoonIcon,
+} from '@lucide/solid'
 import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu.solid.tsx'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.solid.tsx'
-import { cn, defineWebExtension, useAction, useNow, useViewport } from '@/sdk/solid'
+import {
+  api,
+  cn,
+  defineWebExtension,
+  errorMessage,
+  notify,
+  useAction,
+  useNow,
+  useViewport,
+} from '@/sdk/solid'
 import { Footer } from './footer.solid.tsx'
-import { ProjectsAction } from './refs.ts'
-import type { RailProject, RailWarm } from './refs.ts'
+import { ManageAction, ProjectsAction } from './refs.ts'
+import type { RailOp, RailProject, RailWarm } from './refs.ts'
 
 /**
  * Every folder gets its own hue: Ultimate keeps brand purple, the others are spread evenly round the rest of the wheel
@@ -83,8 +106,60 @@ function useLeaving() {
 }
 
 function useProjects() {
-  const { data } = useAction(ProjectsAction, null, { every: 15_000, onError: () => {} })
-  return () => data() ?? []
+  const { data, refetch } = useAction(ProjectsAction, null, { every: 15_000, onError: () => {} })
+  return { projects: () => data() ?? [], refetch }
+}
+
+/** @ultimate's context as the user reads it: 950, 18K, 125K, 1.2M. */
+function tokens(count: number) {
+  if (count < 1000) return String(count)
+  if (count < 1_000_000) return `${Math.round(count / 1000)}K`
+  return `${(count / 1_000_000).toFixed(1)}M`
+}
+
+/**
+ * The ⋯ menu of a project on this machine: keep-warm on or off, compact then off, and Dream. An item stays pending
+ * until that project answered; the rail then reads again so the flame and size follow.
+ */
+function ProjectMenu(props: { project: RailProject; refetch: () => unknown; class?: string }) {
+  const run = (op: string) =>
+    api
+      .action(ManageAction, { url: props.project.url, op: op as RailOp })
+      .then(() => props.refetch())
+      .catch((error: unknown) =>
+        notify({ level: 'error', message: `${props.project.name}: ${errorMessage(error)}` }),
+      )
+  return (
+    <DropdownMenu modal={false} onAction={run}>
+      <DropdownMenuTrigger
+        aria-label={`Actions for ${props.project.name}`}
+        class={cn(
+          'grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent data-open:text-foreground',
+          props.class,
+        )}
+      >
+        <Ellipsis aria-hidden="true" class="size-4" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" class="min-w-52">
+        <Show when={props.project.warm}>
+          {(warm) => (
+            <DropdownMenuItem class="text-[12.5px]" value={warm().on ? 'warm-off' : 'warm-on'}>
+              <FlameIcon aria-hidden="true" />
+              {warm().on ? 'Turn warm off' : 'Turn warm on'}
+            </DropdownMenuItem>
+          )}
+        </Show>
+        <DropdownMenuItem class="text-[12.5px]" value="compact-off">
+          <FoldVerticalIcon aria-hidden="true" />
+          Compact and turn warm off
+        </DropdownMenuItem>
+        <DropdownMenuItem class="text-[12.5px]" value="dream">
+          <MoonIcon aria-hidden="true" />
+          Dream
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
 }
 
 /** Tiles by machine, this machine first (the server lists it first, sorted by name). */
@@ -225,91 +300,117 @@ function Badge(props: { count?: number; class?: string; stale?: boolean; hint?: 
   )
 }
 
-/** A row: the 32px tile the collapsed rail shows, then the name and keep-warm line the hover reveals. */
+/**
+ * A row: the 32px tile with @ultimate's context size under it, which the collapsed rail shows, then the name, keep-warm
+ * line and ⋯ menu the hover reveals.
+ */
 function Row(props: {
   project: RailProject
   now: number
   hues: Map<string, number>
   leaving: ReturnType<typeof useLeaving>
+  refetch: () => unknown
 }) {
   const project = () => props.project
   return (
-    <a
-      aria-busy={props.leaving.is(project()) ? true : undefined}
-      aria-current={project().current ? 'page' : undefined}
-      class={cn(
-        'flex w-full shrink-0 items-center gap-2.5 rounded-md transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        project().current
-          ? 'bg-accent text-foreground'
-          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-      )}
-      href={href(project())}
-      onClick={props.leaving.open(project())}
-      rel={rel(project())}
-      target={target(project())}
-      title={
-        project().warm?.error ??
-        (project().remote ? `Opens in a new tab (on ${project().remote})` : undefined)
-      }
-    >
-      <span class="relative flex size-8 shrink-0 items-center justify-center font-mono text-[12px]">
-        <Tint
-          class={cn('rounded-md', props.leaving.is(project()) && 'animate-pulse ring-2 ring-foreground/40')}
-          current={project().current}
-          hue={props.hues.get(project().folder)}
-        />
-        <span class="relative font-semibold text-neutral-900 dark:text-neutral-50">{project().abbr}</span>
-        <Badge
-          count={project().waiting}
-          hint={waitingHint(project(), props.now)}
-          stale={stale(project(), props.now)}
-        />
-        <Show when={project().busy || project().paused}>
-          <span class="absolute -bottom-0.5 -left-0.5 flex size-3.5 items-center justify-center rounded-full bg-sidebar">
-            <Spinner busy={project().busy} paused={project().paused} />
-          </span>
-        </Show>
-        <Show when={project().warm}>
-          <span class="absolute -right-0.5 -bottom-0.5 flex size-3.5 items-center justify-center rounded-full bg-sidebar">
-            <Flame now={props.now} warm={project().warm} />
-          </span>
-        </Show>
-      </span>
-      <span class="min-w-0 flex-1 pr-2 whitespace-nowrap">
-        <span class="flex items-center gap-1 text-[12px] text-foreground">
-          <span class="truncate">{project().name}</span>
-          <Show when={project().remote}>
-            <ArrowUpRightIcon class="size-3 shrink-0 text-muted-foreground" />
-          </Show>
-          <Show when={project().waiting}>
-            <span
+    <div class="flex w-full shrink-0 items-center gap-1">
+      <a
+        aria-busy={props.leaving.is(project()) ? 'true' : undefined}
+        aria-current={project().current ? 'page' : undefined}
+        class={cn(
+          'flex min-w-0 flex-1 items-start gap-2.5 rounded-md transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          project().current
+            ? 'bg-accent text-foreground'
+            : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+        )}
+        href={href(project())}
+        onClick={props.leaving.open(project())}
+        rel={rel(project())}
+        target={target(project())}
+        title={
+          project().warm?.error ??
+          (project().remote ? `Opens in a new tab (on ${project().remote})` : undefined)
+        }
+      >
+        <span class="flex w-8 shrink-0 flex-col items-center">
+          <span class="relative flex size-8 shrink-0 items-center justify-center font-mono text-[12px]">
+            <Tint
               class={cn(
-                'ml-auto shrink-0 font-mono text-[10px] text-warning',
-                stale(project(), props.now) && 'opacity-50',
+                'rounded-md',
+                props.leaving.is(project()) && 'animate-pulse ring-2 ring-foreground/40',
               )}
-              title={waitingHint(project(), props.now)}
-            >
-              {project().waiting} waiting
+              current={project().current}
+              hue={props.hues.get(project().folder)}
+            />
+            <span class="relative font-semibold text-neutral-900 dark:text-neutral-50">
+              {project().abbr}
             </span>
-          </Show>
+            <Badge
+              count={project().waiting}
+              hint={waitingHint(project(), props.now)}
+              stale={stale(project(), props.now)}
+            />
+            <Show when={project().busy || project().paused}>
+              <span class="absolute -bottom-0.5 -left-0.5 flex size-3.5 items-center justify-center rounded-full bg-sidebar">
+                <Spinner busy={project().busy} paused={project().paused} />
+              </span>
+            </Show>
+            <Show when={project().warm}>
+              <span class="absolute -right-0.5 -bottom-0.5 flex size-3.5 items-center justify-center rounded-full bg-sidebar">
+                <Flame now={props.now} warm={project().warm} />
+              </span>
+            </Show>
+          </span>
+          <span
+            class="h-3 font-mono text-[9px] leading-3 text-muted-foreground tabular-nums"
+            title={
+              project().tokens === undefined
+                ? undefined
+                : `@ultimate context: ${project().tokens!.toLocaleString()} tokens`
+            }
+          >
+            {project().tokens === undefined ? '' : tokens(project().tokens!)}
+          </span>
         </span>
-        <span
-          class={cn(
-            'block truncate font-mono text-[10px]',
-            project().warm && heat(project().warm!, props.now) === 'failed'
-              ? 'text-red-500'
-              : 'text-muted-foreground',
-          )}
-        >
-          {project().paused
-            ? 'paused · '
-            : project().busy
-              ? `working · ${project().busy === 1 ? '1 agent' : `${project().busy} agents`} · `
-              : ''}
-          {project().warm ? warmLine(project().warm!, props.now) : 'Keep warm unknown'}
+        <span class="min-w-0 flex-1 self-center pr-1 whitespace-nowrap">
+          <span class="flex items-center gap-1 text-[12px] text-foreground">
+            <span class="truncate">{project().name}</span>
+            <Show when={project().remote}>
+              <ArrowUpRightIcon class="size-3 shrink-0 text-muted-foreground" />
+            </Show>
+            <Show when={project().waiting}>
+              <span
+                class={cn(
+                  'ml-auto shrink-0 font-mono text-[10px] text-warning',
+                  stale(project(), props.now) && 'opacity-50',
+                )}
+                title={waitingHint(project(), props.now)}
+              >
+                {project().waiting} waiting
+              </span>
+            </Show>
+          </span>
+          <span
+            class={cn(
+              'block truncate font-mono text-[10px]',
+              project().warm && heat(project().warm!, props.now) === 'failed'
+                ? 'text-red-500'
+                : 'text-muted-foreground',
+            )}
+          >
+            {project().paused
+              ? 'paused · '
+              : project().busy
+                ? `working · ${project().busy === 1 ? '1 agent' : `${project().busy} agents`} · `
+                : ''}
+            {project().warm ? warmLine(project().warm!, props.now) : 'Keep warm unknown'}
+          </span>
         </span>
-      </span>
-    </a>
+      </a>
+      <Show when={!project().remote}>
+        <ProjectMenu project={project()} refetch={props.refetch} />
+      </Show>
+    </div>
   )
 }
 
@@ -335,7 +436,7 @@ function Machine(props: { name: string; first: boolean }) {
  * names, machines and keep-warm, and narrows again when the pointer leaves.
  */
 function Rail() {
-  const projects = useProjects()
+  const { projects, refetch } = useProjects()
   const viewport = useViewport()
   const now = useNow(60_000)
   const leaving = useLeaving()
@@ -344,7 +445,7 @@ function Rail() {
   return (
     <Show when={viewport() !== 'phone'}>
       <nav aria-label="Projects" class="relative w-11 shrink-0">
-        <div class="group/rail absolute inset-y-0 left-0 z-40 flex w-11 flex-col gap-1 overflow-x-hidden overflow-y-auto border-r border-border/70 bg-sidebar px-1.5 py-2 transition-[width,box-shadow] duration-150 ease-out hover:w-64 hover:shadow-xl hover:delay-200 has-[:focus-visible]:w-64 has-[:focus-visible]:shadow-xl">
+        <div class="group/rail absolute inset-y-0 left-0 z-40 flex w-11 flex-col gap-1 overflow-x-hidden overflow-y-auto border-r border-border/70 bg-sidebar px-1.5 py-2 transition-[width,box-shadow] duration-150 ease-out hover:w-64 hover:shadow-xl hover:delay-200 has-[:focus-visible]:w-64 has-[:focus-visible]:shadow-xl has-data-open:w-64 has-data-open:shadow-xl">
           <a
             aria-label="Home"
             class="flex w-full shrink-0 items-center gap-2.5 rounded-md text-muted-foreground transition-colors outline-none hover:bg-accent/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -361,7 +462,13 @@ function Rail() {
                 <Machine first={i() === 0} name={group()[0]} />
                 <For each={group()[1]} keyed={(project) => project.url}>
                   {(project) => (
-                    <Row hues={hueOf()} leaving={leaving} now={now()} project={project()} />
+                    <Row
+                      hues={hueOf()}
+                      leaving={leaving}
+                      now={now()}
+                      project={project()}
+                      refetch={refetch}
+                    />
                   )}
                 </For>
               </div>
@@ -378,16 +485,13 @@ function Rail() {
 
 /** Phones have no room for a rail: the same list sits behind a title-bar button. */
 function PhoneProjects() {
-  const projects = useProjects()
+  const { projects, refetch } = useProjects()
   const viewport = useViewport()
   const now = useNow(60_000)
   const leaving = useLeaving()
   const hueOf = createMemo(() => hues(projects().map((project) => project.folder)))
   const waiting = () =>
-    projects().reduce(
-      (sum, project) => sum + (project.current ? 0 : (project.waiting ?? 0)),
-      0,
-    )
+    projects().reduce((sum, project) => sum + (project.current ? 0 : (project.waiting ?? 0)), 0)
   return (
     <Show when={viewport() === 'phone' && projects().length >= 2}>
       <Popover>
@@ -398,7 +502,7 @@ function PhoneProjects() {
           <FoldersIcon class="size-4" />
           <Badge count={waiting()} />
         </PopoverTrigger>
-        <PopoverContent align="end" class="w-64 p-1">
+        <PopoverContent align="end" class="w-72 p-1">
           <For each={byMachine(projects())} keyed={(group) => group[0]}>
             {(group) => (
               <div>
@@ -407,42 +511,58 @@ function PhoneProjects() {
                 </div>
                 <For each={group()[1]} keyed={(project) => project.url}>
                   {(project) => (
-                    <a
-                      aria-busy={leaving.is(project()) ? true : undefined}
-                      class={cn(
-                        'flex items-center gap-2 rounded px-2 py-2 text-sm',
-                        project().current ? 'bg-accent' : 'hover:bg-accent/50',
-                        leaving.is(project()) && 'animate-pulse bg-accent/50',
-                      )}
-                      href={href(project())}
-                      onClick={leaving.open(project())}
-                      rel={rel(project())}
-                      target={target(project())}
-                    >
-                      <span class="relative flex size-6 shrink-0 items-center justify-center font-mono text-xs font-semibold">
-                        <Tint class="rounded" current={project().current} hue={hueOf().get(project().folder)} />
-                        <span class="relative text-neutral-900 dark:text-neutral-50">{project().abbr}</span>
-                      </span>
-                      <span class="min-w-0 flex-1 truncate">{project().name}</span>
-                      <Show when={project().remote}>
-                        <ArrowUpRightIcon class="size-3 shrink-0 text-muted-foreground" />
-                      </Show>
-                      <Show when={project().waiting}>
-                        <span
-                          class={cn(
-                            'font-mono text-[10px] text-warning',
-                            stale(project(), now()) && 'opacity-50',
-                          )}
-                          title={waitingHint(project(), now())}
-                        >
-                          {project().waiting}
+                    <div class="flex items-center">
+                      <a
+                        aria-busy={leaving.is(project()) ? 'true' : undefined}
+                        class={cn(
+                          'flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-2 text-sm',
+                          project().current ? 'bg-accent' : 'hover:bg-accent/50',
+                          leaving.is(project()) && 'animate-pulse bg-accent/50',
+                        )}
+                        href={href(project())}
+                        onClick={leaving.open(project())}
+                        rel={rel(project())}
+                        target={target(project())}
+                      >
+                        <span class="relative flex size-6 shrink-0 items-center justify-center font-mono text-xs font-semibold">
+                          <Tint
+                            class="rounded"
+                            current={project().current}
+                            hue={hueOf().get(project().folder)}
+                          />
+                          <span class="relative text-neutral-900 dark:text-neutral-50">
+                            {project().abbr}
+                          </span>
                         </span>
+                        <span class="min-w-0 flex-1 truncate">{project().name}</span>
+                        <Show when={project().tokens !== undefined}>
+                          <span class="font-mono text-[10px] text-muted-foreground tabular-nums">
+                            {tokens(project().tokens!)}
+                          </span>
+                        </Show>
+                        <Show when={project().remote}>
+                          <ArrowUpRightIcon class="size-3 shrink-0 text-muted-foreground" />
+                        </Show>
+                        <Show when={project().waiting}>
+                          <span
+                            class={cn(
+                              'font-mono text-[10px] text-warning',
+                              stale(project(), now()) && 'opacity-50',
+                            )}
+                            title={waitingHint(project(), now())}
+                          >
+                            {project().waiting}
+                          </span>
+                        </Show>
+                        <Spinner busy={project().busy} paused={project().paused} />
+                        <span class="flex w-3 justify-center">
+                          <Flame class="size-3" now={now()} warm={project().warm} />
+                        </span>
+                      </a>
+                      <Show when={!project().remote} fallback={<span class="w-9 shrink-0" />}>
+                        <ProjectMenu class="size-9" project={project()} refetch={refetch} />
                       </Show>
-                      <Spinner busy={project().busy} paused={project().paused} />
-                      <span class="flex w-3 justify-center">
-                        <Flame class="size-3" now={now()} warm={project().warm} />
-                      </span>
-                    </a>
+                    </div>
                   )}
                 </For>
               </div>
