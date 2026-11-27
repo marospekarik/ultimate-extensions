@@ -205,7 +205,7 @@ function resultText(item: Run, reportPath?: string, brief?: string) {
 }
 
 export default async function hermesResearch(host: Host) {
-  const { pace } = (await import(join(host.ultimateRoot, 'lib/timers.ts'))) as { pace: Pace }
+  const { pace } = (await import(join(host.ultimateRoot, 'lib/timers.shared.ts'))) as { pace: Pace }
 
   const RunTask = defineTask<{ run: string }, { phase: 'launch' } | { phase: 'watch' } | { phase: 'report'; text: string }, null>({
     name: 'hermes-research.run',

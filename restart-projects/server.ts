@@ -144,7 +144,7 @@ let inFlight: Promise<{ rows: Row[] }> | undefined
 
 export default async function restartProjects(host: Host) {
   const { defineEffect } = await import(join(host.ultimateRoot, 'lib/effect.ts'))
-  const { pace } = (await import(join(host.ultimateRoot, 'lib/timers.ts'))) as { pace: Pace }
+  const { pace } = (await import(join(host.ultimateRoot, 'lib/timers.shared.ts'))) as { pace: Pace }
 
   const task = defineEffect('restart-projects.restart', async (_input: unknown, { signal }: { signal: AbortSignal }) => {
     const own = host.system().process.url
