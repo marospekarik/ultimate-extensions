@@ -15,6 +15,7 @@ import type {
   LocalRun,
   LocalRuns,
   PrDetail,
+  PrCard,
   PrList,
   PrSummary,
   SitePreview,
@@ -470,10 +471,80 @@ async function answers(url: string) {
   }
 }
 
+/** How long a hover card's PR stays cached: moving the pointer back and forth costs nothing. */
+const CARD_TTL = 3 * 60_000
+const cards = new Map<string, { at: number; card: Promise<PrCard> }>()
+
+async function readCard(ctx: Ctx, repo: string, n: number): Promise<PrCard> {
+  const raw = JSON.parse(
+    await run(ctx, 'gh', [
+      'pr',
+      'view',
+      String(n),
+      '-R',
+      repo,
+      '--json',
+      'title,state,isDraft,author,baseRefName,headRefName,additions,deletions,changedFiles,statusCheckRollup,reviewDecision,updatedAt',
+    ]),
+  ) as RawPr & {
+    state: string
+    additions: number
+    deletions: number
+    changedFiles: number
+    reviewDecision: string
+  }
+  return {
+    repo,
+    number: n,
+    title: raw.title,
+    state:
+      raw.state === 'MERGED'
+        ? 'merged'
+        : raw.state === 'CLOSED'
+          ? 'closed'
+          : raw.isDraft
+            ? 'draft'
+            : 'open',
+    author: raw.author.login,
+    base: raw.baseRefName,
+    head: raw.headRefName,
+    additions: raw.additions,
+    deletions: raw.deletions,
+    files: raw.changedFiles,
+    checks: rollup((raw.statusCheckRollup ?? []).map(check)),
+    review:
+      raw.reviewDecision === 'APPROVED'
+        ? 'approved'
+        : raw.reviewDecision === 'CHANGES_REQUESTED'
+          ? 'changes'
+          : raw.reviewDecision === 'REVIEW_REQUIRED'
+            ? 'required'
+            : 'none',
+    updatedAt: raw.updatedAt,
+  }
+}
+
 export const userActions = ['comment', 'review', 'merge', 'close', 'runLocally', 'stopLocalRun']
-export const pollActions = ['list', 'view', 'sitePreview', 'localRuns']
+export const pollActions = ['list', 'view', 'sitePreview', 'localRuns', 'card']
 
 export const actions = {
+  async card(args: unknown, ctx: Ctx): Promise<PrCard> {
+    const n = number(args)
+    const repo = (args as { repo?: unknown }).repo
+    if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo))
+      throw new Error('Expected { repo: "owner/name", number }')
+    const key = `${repo}#${n}`
+    const now = Date.now()
+    for (const [old, entry] of cards) if (now - entry.at > CARD_TTL) cards.delete(old)
+    let entry = cards.get(key)
+    if (!entry) {
+      entry = { at: now, card: readCard(ctx, repo, n) }
+      cards.set(key, entry)
+      entry.card.catch(() => cards.delete(key))
+    }
+    return entry.card
+  },
+
   async list(_args: unknown, ctx: Ctx): Promise<PrList> {
     const found = await repoOf(ctx)
     if ('reason' in found) return { status: 'setup', reason: found.reason }

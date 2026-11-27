@@ -53,6 +53,12 @@ After a merge, local `main` follows through the workspaces lander, which checks 
 and fast-forwards the target (see `extensions/workspaces/README.md`, "Pull request mode"). A merged PR the lander did
 not open reaches local `main` with the next one it did, or a `git pull`.
 
+Hovering a link to any GitHub PR in a message (a full `https://github.com/<owner>/<repo>/pull/<n>` href, whatever
+its text, `#32` included) shows a small card after 300 ms: the title with a state dot (open, draft, merged, closed),
+`repo#number`, when it was updated, the author and base ← head, checks, the review decision, and +adds −dels with the
+file count. On touch it opens on a long press, and a normal tap still opens the link. The `card { repo, number }`
+action reads it with `gh pr view` as the `gh` user, so private repositories work, and caches it for three minutes.
+
 Links to this repository's open PRs in messages open the PR here (⌘- or Ctrl-click still opens GitHub). ⌘K has **Open PRs**, and the
 status line counts the open PRs, with how many may merge now.
 

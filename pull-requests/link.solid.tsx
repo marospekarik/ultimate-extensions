@@ -4,6 +4,7 @@ import type { JSX } from "@solidjs/web";
 
 import { showSurface, useAction, useExtensionUiState } from "@/sdk/solid";
 import type { LinkRenderer } from "@/sdk/solid";
+import { PrHover } from "./hover.solid.tsx";
 import { ListAction } from "./refs.ts";
 
 export const SURFACE = "pull-requests";
@@ -11,20 +12,25 @@ export const SURFACE = "pull-requests";
 const prLink =
   /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)\/?(?:[?#].*)?$/;
 
-/** A link to one of this repository's PRs opens it here; ⌘- or Ctrl-click still opens GitHub. */
+/**
+ * A link to any GitHub PR shows a card about it on hover or long press; one to this repository's open PRs opens it
+ * here, while ⌘- or Ctrl-click still opens GitHub.
+ */
 export const Link: LinkRenderer = (props) => {
   const match = () => prLink.exec(props.href);
   return (
     <Show when={match()} fallback={props.core}>
       {(found) => (
-        <PrLink
-          href={props.href}
-          repo={found()[1]}
-          number={Number(found()[2])}
-          core={props.core}
-        >
-          {props.children}
-        </PrLink>
+        <PrHover repo={found()[1]} number={Number(found()[2])}>
+          <PrLink
+            href={props.href}
+            repo={found()[1]}
+            number={Number(found()[2])}
+            core={props.core}
+          >
+            {props.children}
+          </PrLink>
+        </PrHover>
       )}
     </Show>
   );

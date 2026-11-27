@@ -118,6 +118,29 @@ export const InstanceStopAction = actionRef<{ id: string }, null>('instance', 's
 /** The `label` of PR `n`'s Ultimate preview. */
 export const previewLabel = (n: number) => `PR #${n}`
 
+/** What a link's hover card shows about any PR, in any repository the `gh` user can read. */
+export type PrCard = {
+  repo: string
+  number: number
+  title: string
+  state: 'open' | 'draft' | 'merged' | 'closed'
+  author: string
+  base: string
+  head: string
+  additions: number
+  deletions: number
+  files: number
+  checks: Checks
+  /** `required`: a review is required and none decided yet; `none`: no review rule or decision. */
+  review: 'approved' | 'changes' | 'required' | 'none'
+  updatedAt: string
+}
+
+/** `{ repo, number }` → the PR's hover card, cached for three minutes. */
+export const CardAction = actionRef<{ repo: string; number: number }, PrCard>(
+  'pull-requests',
+  'card',
+)
 /** No arguments → the open PRs of the project's GitHub `origin`. */
 export const ListAction = actionRef<null, PrList>('pull-requests', 'list')
 /** `{ number }` → the PR with its checks, description and comments. */
