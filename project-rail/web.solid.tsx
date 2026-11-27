@@ -1,6 +1,6 @@
 /** @jsxImportSource @solidjs/web */
 import { ArrowUpRightIcon, FlameIcon, FoldersIcon, HouseIcon } from '@lucide/solid'
-import { createMemo, For, Show } from 'solid-js'
+import { createMemo, createSignal, For, onCleanup, Show } from 'solid-js'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover.solid.tsx'
 import { cn, defineWebExtension, useAction, useNow, useViewport } from '@/sdk/solid'
 import { Footer } from './footer.solid.tsx'
@@ -53,6 +53,33 @@ function href(project: RailProject) {
   if (!local.test(location.hostname) && project.tailnetPort)
     return `https://${location.hostname}:${project.tailnetPort}/`
   return project.url
+}
+
+/** How long a repeat tap on the tile being opened is ignored; after that it navigates again (a stopped load). */
+const REPEAT_IGNORED_MS = 15_000
+
+const [leaving, setLeaving] = createSignal<{ url: string; at: number }>()
+
+/**
+ * The tile tapped last: it pulses until the next page replaces this one, and a repeat tap does not restart the load.
+ * Coming back through the back/forward cache clears it.
+ */
+function useLeaving() {
+  const listeners = new AbortController()
+  addEventListener('pageshow', () => setLeaving(undefined), { signal: listeners.signal })
+  onCleanup(() => listeners.abort())
+  return {
+    is: (project: RailProject) => leaving()?.url === project.url,
+    open: (project: RailProject) => (event: MouseEvent) => {
+      if (project.remote || project.current) return
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+        return
+      const last = leaving()
+      if (last?.url === project.url && Date.now() - last.at < REPEAT_IGNORED_MS)
+        return event.preventDefault()
+      setLeaving({ url: project.url, at: Date.now() })
+    },
+  }
 }
 
 function useProjects() {
@@ -199,10 +226,16 @@ function Badge(props: { count?: number; class?: string; stale?: boolean; hint?: 
 }
 
 /** A row: the 32px tile the collapsed rail shows, then the name and keep-warm line the hover reveals. */
-function Row(props: { project: RailProject; now: number; hues: Map<string, number> }) {
+function Row(props: {
+  project: RailProject
+  now: number
+  hues: Map<string, number>
+  leaving: ReturnType<typeof useLeaving>
+}) {
   const project = () => props.project
   return (
     <a
+      aria-busy={props.leaving.is(project()) ? true : undefined}
       aria-current={project().current ? 'page' : undefined}
       class={cn(
         'flex w-full shrink-0 items-center gap-2.5 rounded-md transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -211,6 +244,7 @@ function Row(props: { project: RailProject; now: number; hues: Map<string, numbe
           : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
       )}
       href={href(project())}
+      onClick={props.leaving.open(project())}
       rel={rel(project())}
       target={target(project())}
       title={
@@ -219,7 +253,11 @@ function Row(props: { project: RailProject; now: number; hues: Map<string, numbe
       }
     >
       <span class="relative flex size-8 shrink-0 items-center justify-center font-mono text-[12px]">
-        <Tint class="rounded-md" current={project().current} hue={props.hues.get(project().folder)} />
+        <Tint
+          class={cn('rounded-md', props.leaving.is(project()) && 'animate-pulse ring-2 ring-foreground/40')}
+          current={project().current}
+          hue={props.hues.get(project().folder)}
+        />
         <span class="relative font-semibold text-neutral-900 dark:text-neutral-50">{project().abbr}</span>
         <Badge
           count={project().waiting}
@@ -300,6 +338,7 @@ function Rail() {
   const projects = useProjects()
   const viewport = useViewport()
   const now = useNow(60_000)
+  const leaving = useLeaving()
   const groups = createMemo(() => byMachine(projects()))
   const hueOf = createMemo(() => hues(projects().map((project) => project.folder)))
   return (
@@ -321,7 +360,9 @@ function Rail() {
               <div class="contents">
                 <Machine first={i() === 0} name={group()[0]} />
                 <For each={group()[1]} keyed={(project) => project.url}>
-                  {(project) => <Row hues={hueOf()} now={now()} project={project()} />}
+                  {(project) => (
+                    <Row hues={hueOf()} leaving={leaving} now={now()} project={project()} />
+                  )}
                 </For>
               </div>
             )}
@@ -340,6 +381,7 @@ function PhoneProjects() {
   const projects = useProjects()
   const viewport = useViewport()
   const now = useNow(60_000)
+  const leaving = useLeaving()
   const hueOf = createMemo(() => hues(projects().map((project) => project.folder)))
   const waiting = () =>
     projects().reduce(
@@ -366,11 +408,14 @@ function PhoneProjects() {
                 <For each={group()[1]} keyed={(project) => project.url}>
                   {(project) => (
                     <a
+                      aria-busy={leaving.is(project()) ? true : undefined}
                       class={cn(
                         'flex items-center gap-2 rounded px-2 py-2 text-sm',
                         project().current ? 'bg-accent' : 'hover:bg-accent/50',
+                        leaving.is(project()) && 'animate-pulse bg-accent/50',
                       )}
                       href={href(project())}
+                      onClick={leaving.open(project())}
                       rel={rel(project())}
                       target={target(project())}
                     >
