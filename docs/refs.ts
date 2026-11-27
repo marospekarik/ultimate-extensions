@@ -116,6 +116,15 @@ export const FileAction = actionRef<{ path: string }, { data: string }>(
   "file",
 );
 
+/**
+ * `{ path, modified? }` of an image `file` accepts → `{ modified, data }`, its modification time and base64 bytes; when
+ * `modified` equals the file's, only `{ modified }` (the page's cached copy is current).
+ */
+export const ImageAction = actionRef<
+  { path: string; modified?: number },
+  { modified: number; data?: string }
+>("docs", "image");
+
 /** What `begin` answers: an upload id to send chunks to, or that the name is taken (ask, then begin again with `onConflict`). */
 export type UploadBegin =
   | { status: "ok"; id: string; path: string; chunkBytes: number }
@@ -160,7 +169,12 @@ export const PdfAction = actionRef<
 >("docs", "pdf");
 
 /** Where a promoted report went: the repo path, and the PR url or commit. */
-export type Promoted = { path: string; url?: string; commit?: string; at: number };
+export type Promoted = {
+  path: string;
+  url?: string;
+  commit?: string;
+  at: number;
+};
 
 /** `{ path }` of a report → where it was promoted to the repo, or null. */
 export const PromotedAction = actionRef<{ path: string }, Promoted | null>(
@@ -195,6 +209,19 @@ export const PromotePlanAction = actionRef<{ path: string }, PromotePlan>(
  * (`/.reports/` links to promoted reports become repo links, others plain text) or `"keep"`.
  */
 export const PromoteAction = actionRef<
-  { path: string; dir: string; name: string; links: "rewrite" | "keep"; dry?: boolean },
-  { path: string; commit?: string; url?: string; branch?: string; command?: string[]; dry?: boolean }
+  {
+    path: string;
+    dir: string;
+    name: string;
+    links: "rewrite" | "keep";
+    dry?: boolean;
+  },
+  {
+    path: string;
+    commit?: string;
+    url?: string;
+    branch?: string;
+    command?: string[];
+    dry?: boolean;
+  }
 >("docs", "promote");

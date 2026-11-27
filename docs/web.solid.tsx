@@ -99,6 +99,9 @@ import {
 } from "./nav.ts";
 import type { Nav } from "./nav.ts";
 import { prefixOf } from "./blocks.ts";
+import { imageUrl } from "./images.web.ts";
+import { Lightbox } from "./lightbox.solid.tsx";
+import type { Shown } from "./lightbox.solid.tsx";
 import {
   docPath,
   findHeading,
@@ -221,35 +224,33 @@ const imageLinks = (body: string, from: string) =>
       /(<img\b[^>]*?\ssrc=)(["'])([^"']+)\2/gi,
       (match, head: string, quote: string, target: string) => {
         const path = imagePath(target, from);
-        return path ? `${head}${quote}${IMAGE}${encodeURI(path)}${quote}` : match;
+        return path
+          ? `${head}${quote}${IMAGE}${encodeURI(path)}${quote}`
+          : match;
       },
     );
 
-function loadImages(root: HTMLElement, urls: string[]) {
+function loadImages(root: HTMLElement) {
   for (const image of root.querySelectorAll<HTMLImageElement>(
     `img[src^="${IMAGE}"]`,
   )) {
     const path = decodeURI(image.getAttribute("src")!.slice(IMAGE.length));
     image.removeAttribute("src");
+    image.dataset.docImage = path;
+    image.tabIndex = 0;
+    image.title = "Open image";
     image.alt ||= path;
-    api.action(FileAction, { path }).then(
-      ({ data }) => {
-        const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
-        const url = URL.createObjectURL(
-          new Blob([bytes], { type: imageType(path) }),
-        );
-        urls.push(url);
-        image.src = url;
-      },
-      () => {
-        image.replaceWith(
-          Object.assign(document.createElement("span"), {
-            className: "text-muted-foreground font-mono text-[12px]",
-            textContent: `[image not found: ${path}]`,
-          }),
-        );
-      },
-    );
+    const show = (url: string) => {
+      if (image.getAttribute("src") !== url) image.src = url;
+    };
+    imageUrl(path, show).then(show, () => {
+      image.replaceWith(
+        Object.assign(document.createElement("span"), {
+          className: "text-muted-foreground font-mono text-[12px]",
+          textContent: `[image not found: ${path}]`,
+        }),
+      );
+    });
   }
 }
 
@@ -698,6 +699,8 @@ function Body(props: {
 }) {
   let ref: HTMLDivElement | undefined;
   const target = useExternal(() => nav.anchor, subscribe);
+  const [images, setImages] = createSignal<Shown[]>([]);
+  const [lightbox, setLightbox] = createSignal<number | null>(null);
   createEffect(
     () => ({ body: props.doc.body, anchor: target() }),
     ({ anchor }) => {
@@ -720,20 +723,48 @@ function Body(props: {
           .querySelectorAll(headingSelector)
           [found].scrollIntoView({ block: "start" });
       };
-      const urls: string[] = [];
       place();
-      loadImages(root, urls);
+      loadImages(root);
       jump();
       const watch = new MutationObserver(() => {
         place();
-        loadImages(root, urls);
+        loadImages(root);
       });
+      const open = (event: Event) => {
+        const image = (event.target as Element).closest<HTMLImageElement>(
+          "img[data-doc-image]",
+        );
+        if (
+          !image?.src ||
+          (event instanceof KeyboardEvent &&
+            event.key !== "Enter" &&
+            event.key !== " ")
+        )
+          return;
+        event.preventDefault();
+        const shown = [
+          ...root.querySelectorAll<HTMLImageElement>(
+            "img[data-doc-image][src]",
+          ),
+        ];
+        setImages(
+          shown.map((item) => ({
+            path: item.dataset.docImage!,
+            alt: item.alt === item.dataset.docImage ? "" : item.alt,
+            url: item.src,
+          })),
+        );
+        setLightbox(shown.indexOf(image));
+      };
+      root.addEventListener("click", open);
+      root.addEventListener("keydown", open);
       watch.observe(root, { childList: true, subtree: true });
       const settle = setTimeout(jump, 150);
       return () => {
         clearTimeout(settle);
         watch.disconnect();
-        for (const url of urls) URL.revokeObjectURL(url);
+        root.removeEventListener("click", open);
+        root.removeEventListener("keydown", open);
       };
     },
   );
@@ -776,11 +807,12 @@ function Body(props: {
   });
   return (
     <div
-      class="relative"
+      class="relative [&_img[data-doc-image]]:cursor-zoom-in [&_img[data-doc-image]]:transition-opacity [&_img[data-doc-image]:hover]:opacity-90"
       data-docs-body={props.doc.path}
       onMouseUp={touch ? undefined : select}
       ref={ref}
     >
+      <Lightbox images={images()} index={lightbox()} onIndex={setLightbox} />
       <Frontmatter data={props.doc.frontmatter} />
       <div data-docs-markdown="">
         <Markdown
@@ -1565,10 +1597,7 @@ function Delete(props: {
   );
 }
 
-function Promote(props: {
-  path: string;
-  onDone: () => Promise<unknown>;
-}) {
+function Promote(props: { path: string; onDone: () => Promise<unknown> }) {
   const [open, setOpen] = createSignal(false);
   const [state, setState] = createSignal<{ busy?: boolean; error?: string }>(
     {},
@@ -1728,9 +1757,7 @@ function Promote(props: {
               aria-label="Confirm promote"
               class={coarse}
               data-agent-confirm={`Copy ${props.path} into the repo`}
-              disabled={
-                state().busy || !plan.data() || !shownName().trim()
-              }
+              disabled={state().busy || !plan.data() || !shownName().trim()}
               onClick={() => submit()}
               size="xs"
               type="submit"

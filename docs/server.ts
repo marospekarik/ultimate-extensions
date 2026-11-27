@@ -119,7 +119,8 @@ export async function linksSection(host: Host) {
     LINKS,
     "Those links open in this project only. A report or doc that belongs to another project (one you wrote into its reports folder, or a file in its repo) is linked with the full URL of that project's own instance: [name](<url>/?doc=.reports/YYYY-MM-DD-slug.md) for a report, [name](<url>/?doc=path/to/file.md) for a repo file, #section appended for a section. The other running projects, with the URL the user opens each at and its reports folder:",
     ...others.map(
-      (project) => `- ${project.name}: ${project.url} (reports: ${project.reports}/)`,
+      (project) =>
+        `- ${project.name}: ${project.url} (reports: ${project.reports}/)`,
     ),
   ].join("\n");
 }
@@ -139,9 +140,7 @@ export default function docs(host: Host) {
   host.onClose(() => Promise.resolve(stopSweeping?.()));
   return defineExtension({
     name: "docs",
-    sections: [
-      section("docs_links", () => linksSection(host)),
-    ],
+    sections: [section("docs_links", () => linksSection(host))],
   });
 }
 
@@ -296,6 +295,22 @@ async function fileBytes(host: Host, path: string) {
   if (found.stat.size > MAX_PDF_BYTES)
     throw new Error(`${path} is over ${MAX_PDF_BYTES / 1024 / 1024} MB`);
   return { data: (await readFile(found.file)).toString("base64") };
+}
+
+async function imageBytes(host: Host, path: string, modified: unknown) {
+  if (imageType(path) === undefined) throw new Error(`Not an image: ${path}`);
+  const found = path.startsWith(REPORTS)
+    ? await reportImage(host, path)
+    : await trackedImage(host, path);
+  if (!found) throw new Error(`No image ${path}`);
+  if (found.stat.size > MAX_PDF_BYTES)
+    throw new Error(`${path} is over ${MAX_PDF_BYTES / 1024 / 1024} MB`);
+  const stamp = found.stat.mtimeMs;
+  if (modified === stamp) return { modified: stamp };
+  return {
+    modified: stamp,
+    data: (await readFile(found.file)).toString("base64"),
+  };
 }
 
 async function writeDoc(
@@ -453,6 +468,8 @@ export const actions = {
     return { data: (await renderPdf(name, html)).toString("base64") };
   },
   file: (args: unknown, { host }: Ctx) => fileBytes(host, pathOf(args)),
+  image: (args: unknown, { host }: Ctx) =>
+    imageBytes(host, pathOf(args), (args as { modified?: unknown }).modified),
   keep: (args: unknown, { host }: Ctx) => keep(host, pathOf(args)),
   write: (args: unknown, { host }: Ctx) => {
     const { text, base } = args as { text?: unknown; base?: unknown };
